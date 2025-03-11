@@ -14,6 +14,7 @@ find_package(PkgConfig REQUIRED)
 find_package(OpenSSL REQUIRED)
 pkg_check_modules(TINYXML REQUIRED IMPORTED_TARGET tinyxml2)
 pkg_check_modules(NETLINK REQUIRED IMPORTED_TARGET libnl-3.0)
+pkg_check_modules(LIBCONFIG REQUIRED IMPORTED_TARGET libconfig++)
 
 add_subdirectory(examples)
 
