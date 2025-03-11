@@ -22,6 +22,8 @@
 #include <algorithm>
 #include <sstream>
 #include <iomanip>
+// Suppress warnings about MD5 being deprecated in later versions of OpenSSL
+#define OPENSSL_SUPPRESS_DEPRECATED 1
 #include <openssl/md5.h>
 #include "base64.h"
 #include "spdlog/spdlog.h"
@@ -168,13 +170,13 @@ auto LibFlute::File::create_blocks() -> void
   // Create the required source blocks and encoding symbols
   auto buffer_ptr = _buffer;
   size_t remaining_size = _meta.fec_oti.transfer_length;
-  auto number = 0;
+  decltype(_nof_large_source_blocks) number = 0;
   while (remaining_size > 0) {
     SourceBlock block;
-    auto symbol_id = 0;
+    size_t symbol_id = 0;
     auto block_length = ( number < _nof_large_source_blocks ) ? _large_source_block_length : _small_source_block_length;
 
-    for (int i = 0; i < block_length; i++) {
+    for (decltype(block_length) i = 0; i < block_length; i++) {
       auto symbol_length = std::min(remaining_size, (size_t)_meta.fec_oti.encoding_symbol_length);
       assert(buffer_ptr + symbol_length <= _buffer + _meta.fec_oti.transfer_length);
 
@@ -192,7 +194,6 @@ auto LibFlute::File::create_blocks() -> void
 
 auto LibFlute::File::get_next_symbols(size_t max_size) -> std::vector<EncodingSymbol> 
 {
-  auto block = _source_blocks.begin();
   int nof_symbols = std::ceil((float)(max_size - 4) / (float)_meta.fec_oti.encoding_symbol_length);
   auto cnt = 0;
   std::vector<EncodingSymbol> symbols;

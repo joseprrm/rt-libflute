@@ -26,13 +26,15 @@ LibFlute::Transmitter::Transmitter ( const std::string& address,
     boost::asio::io_service& io_service)
     : _endpoint(boost::asio::ip::address::from_string(address), port)
     , _socket(io_service, _endpoint.protocol())
-    , _fdt_timer(io_service)
-    , _send_timer(io_service)
     , _io_service(io_service)
+    , _send_timer(io_service)
+    , _fdt_timer(io_service)
     , _tsi(tsi)
     , _mtu(mtu)
-    , _rate_limit(rate_limit)
+    , _files()
+    , _files_mutex()
     , _mcast_address(address)
+    , _rate_limit(rate_limit)
 {
   _max_payload = mtu -
     20 - // IPv4 header
