@@ -20,6 +20,7 @@
 #include <string>
 #include <map>
 #include <mutex>
+#include <optional>
 #include "File.h"
 #include "AlcPacket.h"
 #include "FileDeliveryTable.h"
@@ -47,11 +48,13 @@ namespace LibFlute {
       *  @param mtu Path MTU to size FLUTE packets for 
       *  @param rate_limit Transmit rate limit (in kbps)
       *  @param io_service Boost io_service to run the socket operations in (must be provided by the caller)
+      *  @param tunnel_endpoint Tunnelling endpoint address (default: no tunnelling)
       */
       Transmitter( const std::string& address, 
           short port, uint64_t tsi, unsigned short mtu,
           uint32_t rate_limit,
-          boost::asio::io_service& io_service);
+          boost::asio::io_service& io_service,
+          const std::optional<boost::asio::ip::udp::endpoint> &tunnel_endpoint = std::nullopt);
 
      /**
       *  Default destructor.
@@ -130,5 +133,7 @@ namespace LibFlute {
       std::string _mcast_address;
 
       uint32_t _rate_limit = 0;
+      std::optional<boost::asio::ip::udp::endpoint> _tunnel_endpoint = std::nullopt;
+      boost::asio::ip::address _tunnel_local_address;
   };
 };
