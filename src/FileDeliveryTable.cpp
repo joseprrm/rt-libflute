@@ -20,9 +20,10 @@
 #include "spdlog/spdlog.h"
 
 
-LibFlute::FileDeliveryTable::FileDeliveryTable(uint32_t instance_id, FecOti fec_oti)
+LibFlute::FileDeliveryTable::FileDeliveryTable(uint32_t instance_id, FecOti fec_oti, FdtNamespace fdt_namespace)
   : _instance_id( instance_id )
   , _global_fec_oti( fec_oti )
+  , _fdt_namespace( fdt_namespace )
 {
 }
 
@@ -161,6 +162,22 @@ auto LibFlute::FileDeliveryTable::to_string() const -> std::string {
   tinyxml2::XMLDocument doc;
   doc.InsertFirstChild( doc.NewDeclaration() );
   auto root = doc.NewElement("FDT-Instance");
+  switch (_fdt_namespace) {
+    case FDT_NS_RFC3926:
+      root->SetAttribute("xmlns", "http://www.example.com/flute");
+      break;
+    case FDT_NS_DRAFT_2005:
+      root->SetAttribute("xmlns", "urn:IETF:metadata:2005:FLUTE:FDT");
+      break;
+    case FDT_NS_RFC6726:
+      root->SetAttribute("xmlns", "urn:ietf:params:xml:ns:fdt");
+      break;
+    case FDT_NS_3GPP_CONSOLIDATED_V2:
+      root->SetAttribute("xmlns", "urn:3GPP:metadata:2022:FLUTE:FDT");
+      break;
+    default:
+      break;
+  }
   root->SetAttribute("Expires", std::to_string(_expires).c_str());
   root->SetAttribute("FEC-OTI-FEC-Encoding-ID", (unsigned)_global_fec_oti.encoding_id);
   root->SetAttribute("FEC-OTI-Maximum-Source-Block-Length", (unsigned)_global_fec_oti.max_source_block_length);

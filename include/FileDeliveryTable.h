@@ -27,12 +27,24 @@ namespace LibFlute {
   class FileDeliveryTable {
     public:
      /**
+      * FDT namespace enumeration
+      */
+      enum FdtNamespace {
+          FDT_NS_NONE = 0,
+          FDT_NS_RFC3926,
+          FDT_NS_DRAFT_2005,
+          FDT_NS_RFC6726,
+          FDT_NS_3GPP_CONSOLIDATED_V2
+      };
+
+     /**
       *  Create an empty FDT
       *
       *  @param instance_id FDT instance ID to set
       *  @param fec_oti Global FEC OTI parameters
+      *  @param fdt_namespace The XML namespace to use for FDT
       */
-      FileDeliveryTable(uint32_t instance_id, FecOti fec_oti);
+      FileDeliveryTable(uint32_t instance_id, FecOti fec_oti, FdtNamespace fdt_namespace = FDT_NS_NONE);
 
      /**
       *  Parse an XML string and create a FDT class from it
@@ -98,5 +110,7 @@ namespace LibFlute {
       FecOti _global_fec_oti;
 
       uint64_t _expires;
+
+      FdtNamespace _fdt_namespace;
   };
 };

@@ -1,6 +1,7 @@
 // libflute - FLUTE/ALC library
 //
 // Copyright (C) 2021 Klaus Kühnhammer (Österreichische Rundfunksender GmbH & Co KG)
+//               2025 British Broadcasting Corporation (David Waring <david.waring2@bbc.co.uk>)
 //
 // Licensed under the License terms and conditions for use, reproduction, and
 // distribution of 5G-MAG software (the “License”).  You may not use this file
@@ -9,7 +10,7 @@
 // agreed to in writing, software distributed under the License is distributed on
 // an “AS IS” BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied.
-// 
+//
 // See the License for the specific language governing permissions and limitations
 // under the License.
 //
@@ -35,7 +36,8 @@ static uint16_t calculate_sum( uint16_t *buffer, size_t len );
 LibFlute::Transmitter::Transmitter ( const std::string& address, short port,
                                      uint64_t tsi, unsigned short mtu, uint32_t rate_limit,
                                      boost::asio::io_service& io_service,
-                                     const std::optional<boost::asio::ip::udp::endpoint> &tunnel_endpoint )
+                                     const std::optional<boost::asio::ip::udp::endpoint> &tunnel_endpoint,
+                                     LibFlute::Transmitter::FdtNamespace fdt_namespace )
     : _endpoint(boost::asio::ip::address::from_string(address), port)
     , _socket(io_service, _endpoint.protocol())
     , _io_service(io_service)
@@ -69,7 +71,7 @@ LibFlute::Transmitter::Transmitter ( const std::string& address, short port,
   _socket.set_option(boost::asio::ip::udp::socket::reuse_address(true));
 
   _fec_oti = FecOti{FecScheme::CompactNoCode, 0, _max_payload, max_source_block_length};
-  _fdt = std::make_unique<FileDeliveryTable>(1, _fec_oti);
+  _fdt = std::make_unique<FileDeliveryTable>(1, _fec_oti, fdt_namespace);
 
   _fdt_timer.expires_from_now(boost::posix_time::seconds(_fdt_repeat_interval));
   _fdt_timer.async_wait( boost::bind(&Transmitter::fdt_send_tick, this));

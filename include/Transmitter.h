@@ -1,6 +1,7 @@
 // libflute - FLUTE/ALC library
 //
 // Copyright (C) 2021 Klaus Kühnhammer (Österreichische Rundfunksender GmbH & Co KG)
+//               2025 British Broadcasting Corporation (David Waring <david.waring2@bbc.co.uk>)
 //
 // Licensed under the License terms and conditions for use, reproduction, and
 // distribution of 5G-MAG software (the “License”).  You may not use this file
@@ -9,7 +10,7 @@
 // agreed to in writing, software distributed under the License is distributed on
 // an “AS IS” BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied.
-// 
+//
 // See the License for the specific language governing permissions and limitations
 // under the License.
 //
@@ -32,6 +33,11 @@ namespace LibFlute {
   class Transmitter {
     public:
      /**
+      * FDT namespace enumeration
+      */
+      using FdtNamespace = FileDeliveryTable::FdtNamespace;
+
+     /**
       *  Definition of a file transmission completion callback function that can be
       *  registered through ::register_completion_callback.
       *
@@ -49,12 +55,14 @@ namespace LibFlute {
       *  @param rate_limit Transmit rate limit (in kbps)
       *  @param io_service Boost io_service to run the socket operations in (must be provided by the caller)
       *  @param tunnel_endpoint Tunnelling endpoint address (default: no tunnelling)
+      *  @param fdt_namespace Which XML namespace to use for the FDT (default: none)
       */
       Transmitter( const std::string& address, 
           short port, uint64_t tsi, unsigned short mtu,
           uint32_t rate_limit,
           boost::asio::io_service& io_service,
-          const std::optional<boost::asio::ip::udp::endpoint> &tunnel_endpoint = std::nullopt);
+          const std::optional<boost::asio::ip::udp::endpoint> &tunnel_endpoint = std::nullopt,
+          FdtNamespace fdt_namespace = FileDeliveryTable::FDT_NS_NONE);
 
      /**
       *  Default destructor.
