@@ -1,6 +1,7 @@
 // libflute - FLUTE/ALC library
 //
 // Copyright (C) 2021 Klaus Kühnhammer (Österreichische Rundfunksender GmbH & Co KG)
+//               2025 British Broadcasting Corporation (David Waring <david.waring2@bbc.co.uk>)
 //
 // Licensed under the License terms and conditions for use, reproduction, and
 // distribution of 5G-MAG software (the “License”).  You may not use this file
@@ -9,7 +10,7 @@
 // agreed to in writing, software distributed under the License is distributed on
 // an “AS IS” BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied.
-// 
+//
 // See the License for the specific language governing permissions and limitations
 // under the License.
 //
@@ -173,10 +174,10 @@ auto main(int argc, char **argv) -> int {
     LibFlute::Transmitter transmitter(
         arguments.mcast_target,
         (short)arguments.mcast_port,
-        0,
+        16,
         arguments.mtu,
         arguments.rate_limit,
-        io);
+        io, std::nullopt, LibFlute::FileDeliveryTable::FDT_NS_DRAFT_2005);
 
     // Configure IPSEC ESP, if enabled
     if (arguments.enable_ipsec) 

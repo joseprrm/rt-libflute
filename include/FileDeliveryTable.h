@@ -1,6 +1,7 @@
 // libflute - FLUTE/ALC library
 //
 // Copyright (C) 2021 Klaus Kühnhammer (Österreichische Rundfunksender GmbH & Co KG)
+//               2025 British Broadcasting Corporation (David Waring <david.waring2@bbc.co.uk>)
 //
 // Licensed under the License terms and conditions for use, reproduction, and
 // distribution of 5G-MAG software (the “License”).  You may not use this file
@@ -9,13 +10,14 @@
 // agreed to in writing, software distributed under the License is distributed on
 // an “AS IS” BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied.
-// 
+//
 // See the License for the specific language governing permissions and limitations
 // under the License.
 //
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
+#include <map>
 #include <string>
 #include <vector>
 #include "flute_types.h"
@@ -33,7 +35,7 @@ namespace LibFlute {
           FDT_NS_NONE = 0,
           FDT_NS_RFC3926,
           FDT_NS_DRAFT_2005,
-          FDT_NS_RFC6726,
+//          FDT_NS_RFC6726, // FLUTE v2 - will need other things implementing to use this correctly
           FDT_NS_3GPP_CONSOLIDATED_V2
       };
 
