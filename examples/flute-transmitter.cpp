@@ -14,15 +14,19 @@
 // See the License for the specific language governing permissions and limitations
 // under the License.
 //
-#include <cstdio>
-#include <iostream>
 #include <argp.h>
 
+#include <cstdio>
 #include <cstdlib>
 
+#include <chrono>
+#include <iostream>
+#include <list>
+#include <vector>
 #include <fstream>
 #include <string>
 #include <filesystem>
+
 #include <libconfig.h++>
 #include <boost/asio.hpp>
 
@@ -38,6 +42,8 @@ using libconfig::Config;
 using libconfig::FileIOException;
 using libconfig::ParseException;
 
+using namespace std::literals::chrono_literals;
+
 static void print_version(FILE *stream, struct argp_state *state);
 void (*argp_program_version_hook)(FILE *, struct argp_state *) = print_version;
 const char *argp_program_bug_address = "Austrian Broadcasting Services <obeca@ors.at>";
@@ -51,8 +57,11 @@ static struct argp_option options[] = {  // NOLINT
     {"ipsec-key", 'k', "KEY", 0, "To enable IPSec/ESP encryption of packets, provide a hex-encoded AES key here", 0},
     {"log-level", 'l', "LEVEL", 0,
      "Log verbosity: 0 = trace, 1 = debug, 2 = info, 3 = warn, 4 = error, 5 = "
-     "critical, 6 = none. Default: 2.",
+     "critical, 6 = none (default: 2)",
      0},
+    {"gzip", 'g', nullptr, 0, "Use gzip to compress the contents, implies -n option", 0},
+    {"tsi", 'T', "ID", 0, "The TSI to use for the FLUTE session (default: 16)", 0},
+    {"new-api", 'n', nullptr, 0, "Use the new FileDescription API", 0},
     {nullptr, 0, nullptr, 0, nullptr, 0}};
 
 /**
@@ -61,10 +70,13 @@ static struct argp_option options[] = {  // NOLINT
 struct ft_arguments {
   const char *mcast_target = {};
   bool enable_ipsec = false;
+  bool use_gzip = false;
+  bool new_api = false;
   const char *aes_key = {};
   unsigned short mcast_port = 40085;
   unsigned short mtu = 1500;
   uint32_t rate_limit = 1000;
+  uint64_t tsi = 16;
   unsigned log_level = 2;        /**< log level */
   char **files;
 };
@@ -94,6 +106,16 @@ static auto parse_opt(int key, char *arg, struct argp_state *state) -> error_t {
     case 'l':
       arguments->log_level = static_cast<unsigned>(strtoul(arg, nullptr, 10));
       break;
+    case 'g':
+      arguments->use_gzip = true;
+      arguments->new_api = true;
+      break;
+    case 'T':
+      arguments->tsi = static_cast<uint64_t>(strtoul(arg, nullptr, 10));
+      break;
+    case 'n':
+      arguments->new_api = true;
+      break;
     case ARGP_KEY_NO_ARGS:
       argp_usage (state);
     case ARGP_KEY_ARG:
@@ -117,6 +139,130 @@ void print_version(FILE *stream, struct argp_state * /*state*/) {
   fprintf(stream, "%s.%s.%s\n", std::to_string(VERSION_MAJOR).c_str(),
           std::to_string(VERSION_MINOR).c_str(),
           std::to_string(VERSION_PATCH).c_str());
+}
+
+static void send_with_new_api(struct ft_arguments &arguments)
+{
+  std::list<std::shared_ptr<LibFlute::Transmitter::FileDescription> > files;
+
+  for (int j = 0; arguments.files[j]; j++) {
+    auto fd = new LibFlute::Transmitter::FileDescription(arguments.files[j], arguments.files[j]);
+    fd->set_content_type("application/octet-stream");
+    fd->set_expiry_time(std::chrono::system_clock::now() + 60s);
+    if (arguments.use_gzip) {
+      fd->set_compression(LibFlute::Transmitter::FileDescription::COMPRESSION_GZIP);
+    }
+    files.emplace_back(fd);
+  }
+
+  // Create a Boost io_service
+  boost::asio::io_service io;
+
+  // Construct the transmitter class
+  LibFlute::Transmitter transmitter(
+        arguments.mcast_target,
+        (short)arguments.mcast_port,
+        arguments.tsi,
+        arguments.mtu,
+        arguments.rate_limit,
+        io, std::nullopt, LibFlute::FileDeliveryTable::FDT_NS_DRAFT_2005);
+
+  // Configure IPSEC ESP, if enabled
+  if (arguments.enable_ipsec)
+  {
+    transmitter.enable_ipsec(1, arguments.aes_key);
+  }
+
+  // Register a completion callback
+  transmitter.register_completion_callback(
+        [&files](uint32_t toi) {
+          for (auto& file : files) {
+            if (file->toi() == toi) {
+              spdlog::info("{} (TOI {}) has been transmitted", file->file_entry().content_location, file->toi());
+              // could file.reset() to free the FileDescription here.
+            }
+          }
+        });
+
+  // Queue all the files 
+  for (const auto& file : files) {
+    auto toi = transmitter.send( file );
+    const auto &file_entry = file->file_entry();
+    spdlog::info("Queued {} ({} bytes ({} bytes transmitted)) for transmission, TOI is {}",
+          file_entry.content_location, file_entry.content_length, file_entry.transfer_length, toi);
+  }
+
+  // Start the io_service, and thus sending data
+  io.run();
+}
+
+static void send_with_old_api(struct ft_arguments &arguments)
+{
+  // We're responsible for buffer management, so create a vector of structs that
+  // are going to hold the data buffers
+  struct FsFile {
+    std::string location;
+    char* buffer;
+    size_t len;
+    uint32_t toi;
+  };
+  std::vector<FsFile> files;
+
+  // read the file contents into the buffers
+  for (int j = 0; arguments.files[j]; j++) {
+    const std::string &location = arguments.files[j];
+    std::ifstream file(location, std::ios::binary | std::ios::ate);
+    std::streamsize size = file.tellg();
+    file.seekg(0, std::ios::beg);
+
+    char* buffer = (char*)malloc(size);
+    file.read(buffer, size);
+    files.push_back(FsFile{ location, buffer, (size_t)size});
+  }
+
+  // Create a Boost io_service
+  boost::asio::io_service io;
+
+  // Construct the transmitter class
+  LibFlute::Transmitter transmitter(
+        arguments.mcast_target,
+        (short)arguments.mcast_port,
+        arguments.tsi,
+        arguments.mtu,
+        arguments.rate_limit,
+        io, std::nullopt, LibFlute::FileDeliveryTable::FDT_NS_DRAFT_2005);
+
+  // Configure IPSEC ESP, if enabled
+  if (arguments.enable_ipsec) 
+  {
+    transmitter.enable_ipsec(1, arguments.aes_key);
+  }
+
+  // Register a completion callback
+  transmitter.register_completion_callback(
+        [&files](uint32_t toi) {
+          for (auto& file : files) {
+            if (file.toi == toi) { 
+              spdlog::info("{} (TOI {}) has been transmitted", file.location, file.toi);
+              // could free() the buffer here
+            }
+          }
+        });
+
+  // Queue all the files 
+  for (auto& file : files) {
+    file.toi = transmitter.send( file.location,
+          "application/octet-stream",
+          transmitter.seconds_since_epoch() + 60, // 1 minute from now
+          file.buffer,
+          file.len
+          );
+    spdlog::info("Queued {} ({} bytes) for transmission, TOI is {}",
+          file.location, file.len, file.toi);
+  }
+
+  // Start the io_service, and thus sending data
+  io.run();
 }
 
 /**
@@ -145,72 +291,11 @@ auto main(int argc, char **argv) -> int {
   spdlog::info("FLUTE transmitter demo starting up");
 
   try {
-    // We're responsible for buffer management, so create a vector of structs that
-    // are going to hold the data buffers
-    struct FsFile {
-      std::string location;
-      char* buffer;
-      size_t len;
-      uint32_t toi;
-    };
-    std::vector<FsFile> files;
-
-    // read the file contents into the buffers
-    for (int j = 0; arguments.files[j]; j++) {
-      std::string location = arguments.files[j];
-      std::ifstream file(arguments.files[j], std::ios::binary | std::ios::ate);
-      std::streamsize size = file.tellg();
-      file.seekg(0, std::ios::beg);
-
-      char* buffer = (char*)malloc(size);
-      file.read(buffer, size);
-      files.push_back(FsFile{ arguments.files[j], buffer, (size_t)size});
+    if (arguments.new_api) {
+      send_with_new_api(arguments);
+    } else {
+      send_with_old_api(arguments);
     }
-
-    // Create a Boost io_service
-    boost::asio::io_service io;
-
-    // Construct the transmitter class
-    LibFlute::Transmitter transmitter(
-        arguments.mcast_target,
-        (short)arguments.mcast_port,
-        16,
-        arguments.mtu,
-        arguments.rate_limit,
-        io, std::nullopt, LibFlute::FileDeliveryTable::FDT_NS_DRAFT_2005);
-
-    // Configure IPSEC ESP, if enabled
-    if (arguments.enable_ipsec) 
-    {
-      transmitter.enable_ipsec(1, arguments.aes_key);
-    }
-
-    // Register a completion callback
-    transmitter.register_completion_callback(
-        [&files](uint32_t toi) {
-        for (auto& file : files) {
-        if (file.toi == toi) { 
-        spdlog::info("{} (TOI {}) has been transmitted",
-            file.location, file.toi);
-        // could free() the buffer here
-        }
-        }
-        });
-
-    // Queue all the files 
-    for (auto& file : files) {
-      file.toi = transmitter.send( file.location,
-          "application/octet-stream",
-          transmitter.seconds_since_epoch() + 60, // 1 minute from now
-          file.buffer,
-          file.len
-          );
-      spdlog::info("Queued {} ({} bytes) for transmission, TOI is {}",
-          file.location, file.len, file.toi);
-    }
-
-    // Start the io_service, and thus sending data
-    io.run();
   } catch (std::exception ex ) {
     spdlog::error("Exiting on unhandled exception: %s", ex.what());
   }

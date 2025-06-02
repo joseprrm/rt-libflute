@@ -26,8 +26,8 @@ auto LibFlute::EncodingSymbol::from_payload(char* encoded_data, size_t data_len,
   auto encoding_symbol_id = 0;
   std::vector<EncodingSymbol> symbols;
 
-  if (encoding != ContentEncoding::NONE) {
-    throw "Only unencoded content is supported";
+  if (encoding != ContentEncoding::NONE && encoding != ContentEncoding::GZIP) {
+    throw "Only unencoded or gzipped content is supported";
   }
   
   if (fec_oti.encoding_id == FecScheme::CompactNoCode) {
@@ -57,12 +57,13 @@ auto LibFlute::EncodingSymbol::to_payload(const std::vector<EncodingSymbol>& sym
   size_t len = 0;
   auto ptr = encoded_data;
   auto first_symbol = symbols.begin();
-  if (fec_oti.encoding_id == FecScheme::CompactNoCode) {
+  if (fec_oti.encoding_id == FecScheme::CompactNoCode && data_len >= 4) {
     *((uint16_t*)ptr) = htons(first_symbol->source_block_number());
     ptr += 2;
     *((uint16_t*)ptr) = htons(first_symbol->id());
     ptr += 2;
     len += 4;
+    data_len -= 4;
   } else {
     throw "Only compact no-code FEC is supported";
   }

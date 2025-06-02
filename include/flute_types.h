@@ -50,8 +50,17 @@ namespace LibFlute {
    */
   struct FecOti {
     FecScheme encoding_id;
+    uint32_t instance_id;
     uint64_t transfer_length;
     uint32_t encoding_symbol_length;
     uint32_t max_source_block_length;
+    uint32_t max_number_of_encoding_symbols;
+
+    bool operator==(const FecOti &other) const {
+      return encoding_id == other.encoding_id && transfer_length == other.transfer_length &&
+             encoding_symbol_length == other.encoding_symbol_length && max_source_block_length == other.max_source_block_length &&
+             max_number_of_encoding_symbols == other.max_number_of_encoding_symbols;
+    };
+    bool operator!=(const FecOti &other) const { return !(*this == other); };
   };
 };

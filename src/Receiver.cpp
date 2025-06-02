@@ -105,6 +105,8 @@ auto LibFlute::Receiver::handle_receive_from(const boost::system::error_code& er
             }
           }
 
+          file->decode();
+
           spdlog::debug("File with TOI {} completed", alc.toi());
           if (alc.toi() != 0 && _completion_cb) {
             _completion_cb(_files[alc.toi()]);

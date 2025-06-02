@@ -8,7 +8,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 set(CMAKE_CXX_FLAGS_DEBUG_INIT "-Wall -Wextra -Werror -g3")
 set(CMAKE_CXX_FLAGS_RELEASE_INIT "-Wall -O3")
 
-find_package(Boost REQUIRED)
+find_package(Boost CONFIG REQUIRED)
 find_package(spdlog REQUIRED)
 find_package(PkgConfig REQUIRED)
 

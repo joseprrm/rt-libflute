@@ -14,18 +14,39 @@
 // See the License for the specific language governing permissions and limitations
 // under the License.
 //
+#include <errno.h>
+#include <fcntl.h>
 #include <netinet/ip.h>
 #include <netinet/udp.h>
+#if HAVE_MMAP
+#include <sys/mman.h>
+#endif
+#include <unistd.h>
 
+// Suppress warnings about MD5 being deprecated in later versions of OpenSSL
+#define OPENSSL_SUPPRESS_DEPRECATED 1
+#include <openssl/md5.h>
+#include "base64.h"
+
+#include <zlib.h>
+
+#include <ctime>
 #include <cstdio>
 #include <chrono>
 #include <cstring>
+#include <exception>
 #include <iostream>
+#include <list>
 #include <string>
+#include <system_error>
 
 #include "spdlog/spdlog.h"
-#include "Transmitter.h"
+#include "File.h"
 #include "IpSec.h"
+
+#include "Transmitter.h"
+
+namespace LibFlute {
 
 static void create_udp_pkt( char *udp_buffer, const boost::asio::ip::udp::endpoint &endpoint, const char *data, size_t data_len,
                             const boost::asio::ip::address &local_address );
@@ -33,11 +54,428 @@ static void create_ip_hdr( char *ip_buffer, const boost::asio::ip::udp::endpoint
                            const boost::asio::ip::address &local_address );
 static uint16_t calculate_sum( uint16_t *buffer, size_t len );
 
-LibFlute::Transmitter::Transmitter ( const std::string& address, short port,
-                                     uint64_t tsi, unsigned short mtu, uint32_t rate_limit,
-                                     boost::asio::io_service& io_service,
-                                     const std::optional<boost::asio::ip::udp::endpoint> &tunnel_endpoint,
-                                     LibFlute::Transmitter::FdtNamespace fdt_namespace )
+/*****************************************************************************
+ * Transmitter::FileDescription class
+ *****************************************************************************/
+
+Transmitter::FileDescription::FileDescription ( const std::string &content_location, const std::string &filename )
+    : _tsi()
+    , _file_entry({ .toi=0, .content_location=content_location})
+    , _compression_type(Transmitter::FileDescription::COMPRESSION_NONE)
+    , _filename()
+    , _file_handle(-1)
+    , _data(nullptr)
+    , _data_length(0)
+    , _transfer_data(nullptr)
+    , _transfer_length(0)
+{
+  _attach_file(filename);
+  _calculate_file_entry();
+}
+
+Transmitter::FileDescription::FileDescription(const std::string &content_location, const std::vector<char> &data)
+    : _tsi()
+    , _file_entry({ .toi=0, .content_location=content_location})
+    , _compression_type(Transmitter::FileDescription::COMPRESSION_NONE)
+    , _filename()
+    , _file_handle(-1)
+    , _data(data.data())
+    , _data_length(data.size())
+    , _transfer_data(nullptr)
+    , _transfer_length(0)
+{
+  _calculate_file_entry();
+}
+
+Transmitter::FileDescription::FileDescription(const std::string &content_location, const char *data, size_t length)
+    : _tsi()
+    , _file_entry({ .toi=0, .content_location=content_location})
+    , _compression_type(Transmitter::FileDescription::COMPRESSION_NONE)
+    , _filename()
+    , _file_handle(-1)
+    , _data(data)
+    , _data_length(length)
+    , _transfer_data(nullptr)
+    , _transfer_length(0)
+{
+  _calculate_file_entry();
+}
+
+Transmitter::FileDescription::FileDescription(const std::string &content_location)
+    : _tsi()
+    , _file_entry({ .toi=0, .content_location=content_location})
+    , _compression_type(Transmitter::FileDescription::COMPRESSION_NONE)
+    , _filename()
+    , _file_handle(-1)
+    , _data(nullptr)
+    , _data_length(0)
+    , _transfer_data(nullptr)
+    , _transfer_length(0)
+{
+  _calculate_file_entry();
+}
+
+Transmitter::FileDescription::FileDescription(const Transmitter::FileDescription &other)
+    : _tsi(other._tsi)
+    , _file_entry(other._file_entry)
+    , _compression_type(other._compression_type)
+    , _filename(other._filename)
+    , _file_handle(-1)
+    , _data(other._data)
+    , _data_length(other._data_length)
+    , _transfer_data(nullptr)
+    , _transfer_length(0)
+{
+  if (!_filename.empty()) {
+    if (other._file_handle >= 0) {
+      _file_handle = dup(other._file_handle);
+    }
+#if HAVE_MMAP
+    // Map the file contents into memory
+    _data = reinterpret_cast<char*>(mmap(nullptr, _data_length, PROT_READ, MAP_SHARED, _file_handle, 0));
+#else
+    // copy the file contents into a new memory block
+    char *data = new char[_data_length];
+    _data = data;
+    memcpy(_data, other._data, _data_length);
+#endif
+  } 
+}
+
+Transmitter::FileDescription::FileDescription(Transmitter::FileDescription &&other)
+    : _tsi(std::move(other._tsi))
+    , _file_entry(other._file_entry)
+    , _compression_type(other._compression_type)
+    , _filename(std::move(other._filename))
+    , _file_handle(other._file_handle)
+    , _data(other._data)
+    , _data_length(other._data_length)
+    , _transfer_data(other._transfer_data)
+    , _transfer_length(other._transfer_length)
+{
+  other._data = nullptr;
+  other._data_length = 0;
+  other._transfer_data = nullptr;
+  other._transfer_length = 0;
+  other._file_handle = -1;
+}
+
+Transmitter::FileDescription::~FileDescription ()
+{
+  _free_file_data();
+}
+
+Transmitter::FileDescription &Transmitter::FileDescription::operator=(const Transmitter::FileDescription &other)
+{
+  _tsi = other._tsi;
+  _file_entry = other._file_entry;
+  _compression_type = other._compression_type;
+  _filename = other._filename;
+  _file_handle = -1;
+  _data = other._data;
+  _data_length = other._data_length;
+  _transfer_data = nullptr;
+  _transfer_length = 0;
+
+  if (!_filename.empty()) {
+    if (other._file_handle >= 0) {
+      _file_handle = dup(other._file_handle);
+    }
+#if HAVE_MMAP
+    // Map the file contents into memory
+    _data = reinterpret_cast<char*>(mmap(nullptr, _data_length, PROT_READ, MAP_SHARED, _file_handle, 0));
+#else
+    // copy the file contents into a new memory block
+    char *data = new char[_data_length];
+    _data = data;
+    memcpy(_data, other._data, _data_length);
+#endif
+  }
+
+  return *this;
+}
+
+Transmitter::FileDescription &Transmitter::FileDescription::operator=(Transmitter::FileDescription &&other)
+{
+  _tsi = std::move(other._tsi);
+  _file_entry = other._file_entry;
+  _compression_type = other._compression_type;
+  _filename = std::move(other._filename);
+  _file_handle = other._file_handle;
+  other._file_handle = -1;
+
+  _data = other._data;
+  other._data = nullptr;
+  _data_length = other._data_length;
+  other._data_length = 0;
+
+  _transfer_data = other._transfer_data;
+  other._transfer_data = nullptr;
+  _transfer_length = other._transfer_length;
+  other._transfer_length = 0;
+
+  return *this;
+}
+
+bool Transmitter::FileDescription::operator==(const Transmitter::FileDescription &other) const
+{
+  if (_tsi != other._tsi) return false;
+  if (_compression_type != other._compression_type) return false;
+
+  // _file_entry
+  if (_file_entry.toi != other._file_entry.toi) return false;
+  if (_file_entry.expires != other._file_entry.expires) return false;
+  if (_file_entry.fec_oti != other._file_entry.fec_oti) return false;
+  if (_file_entry.content_location != other._file_entry.content_location) return false;
+  if (_file_entry.content_type != other._file_entry.content_type) return false;
+
+  //if (_filename != other._filename) return false;
+
+  if (_data_length != other._data_length) return false;
+
+  if (_data == other._data) return true;
+  return memcmp(_data, other._data, _data_length) == 0;
+}
+
+const char *Transmitter::FileDescription::data()
+{
+  _compress_data();
+  // If we have a compressed version cached, return that
+  if (_transfer_data) return _transfer_data;
+  // ...otherwise return the uncompressed data
+  return _data;
+}
+
+size_t Transmitter::FileDescription::data_length()
+{
+  _compress_data();
+  // If we have a compressed version cached, return the compressed length
+  if (_transfer_data) return _transfer_length;
+  // ...otherwise return the length of the uncompressed data
+  return _data_length;
+}
+
+Transmitter::FileDescription &Transmitter::FileDescription::set_compression(
+								Transmitter::FileDescription::CompressionAlgorithm compression)
+{
+  if (compression != _compression_type) {
+    if (_transfer_data) {
+	delete[] _transfer_data;
+	_transfer_data = nullptr;
+        _transfer_length = 0;
+    }
+    _compression_type = compression;
+  }
+
+  return *this;
+}
+
+Transmitter::FileDescription &Transmitter::FileDescription::set_content(const std::string &filename)
+{
+  if (filename != _filename) {
+    _free_file_data();
+    _attach_file(filename);
+  }
+
+  return *this;
+}
+
+Transmitter::FileDescription &Transmitter::FileDescription::set_content(const char *data, size_t data_length)
+{
+  if (data != _data) {
+    _free_file_data();
+    _data = data;
+    _data_length = data_length;
+  }
+
+  return *this;
+}
+
+Transmitter::FileDescription &Transmitter::FileDescription::set_content(const std::vector<char> &data)
+{
+  return set_content(data.data(), data.size());
+}
+
+Transmitter::FileDescription &Transmitter::FileDescription::set_content(const std::vector<unsigned char> &data)
+{
+  return set_content(reinterpret_cast<const char*>(data.data()), data.size());
+}
+
+Transmitter::FileDescription &Transmitter::FileDescription::set_content_type(const std::string &content_type)
+{
+  _file_entry.content_type = content_type;
+  return *this;
+}
+
+static const Transmitter::FileDescription::date_time_type &_get_ntp_epoch()
+{
+  static bool is_set = false;
+  static Transmitter::FileDescription::date_time_type ntp_epoch;
+  if (!is_set) {
+    std::tm ntp_epoch_tm = {.tm_mday=1, .tm_mon=0, .tm_year=0};
+    ntp_epoch = std::chrono::system_clock::from_time_t(std::mktime(&ntp_epoch_tm));
+    is_set = true;
+  }
+  return ntp_epoch;
+}
+
+Transmitter::FileDescription &Transmitter::FileDescription::set_expiry_time(
+								const Transmitter::FileDescription::date_time_type &expiry_time)
+{
+  auto diff = std::chrono::duration_cast<std::chrono::seconds>(expiry_time - _get_ntp_epoch());
+  _file_entry.expires = diff.count();
+  _file_entry.cache_control.cache_expires = _file_entry.expires;
+
+  return *this;
+}
+
+Transmitter::FileDescription::date_time_type Transmitter::FileDescription::get_expiry_time() const
+{
+  auto durn = std::chrono::duration_cast<date_time_type::duration>(std::chrono::seconds(_file_entry.expires));
+  return _get_ntp_epoch() + durn;
+}
+
+Transmitter::FileDescription &Transmitter::FileDescription::merge_fec_oti(const FecOti &fec_oti)
+{
+  if (static_cast<unsigned>(_file_entry.fec_oti.encoding_id) == 0) {
+    _file_entry.fec_oti.encoding_id = fec_oti.encoding_id;
+  }
+  if (!_file_entry.fec_oti.instance_id) {
+    _file_entry.fec_oti.instance_id = fec_oti.instance_id;
+  }
+  //if (!_file_entry.fec_oti.transfer_length) {
+  //  _file_entry.fec_oti.transfer_length = fec_oti.transfer_length;
+  //}
+  if (!_file_entry.fec_oti.encoding_symbol_length) {
+    _file_entry.fec_oti.encoding_symbol_length = fec_oti.encoding_symbol_length;
+  }
+  if (!_file_entry.fec_oti.max_source_block_length) {
+    _file_entry.fec_oti.max_source_block_length = fec_oti.max_source_block_length;
+  }
+  if (!_file_entry.fec_oti.max_number_of_encoding_symbols) {
+    _file_entry.fec_oti.max_number_of_encoding_symbols = fec_oti.max_number_of_encoding_symbols;
+  }
+  return *this;
+}
+
+void Transmitter::FileDescription::_attach_file(const std::string &filename)
+{
+  _filename = filename;
+  _file_handle = open(_filename.c_str(), O_RDONLY);
+  if (_file_handle < 0) {
+    throw std::system_error(errno, std::generic_category(), "Could not open the file");
+  }
+  // Get the size
+  off_t pos = lseek(_file_handle, 0, SEEK_END);
+  if (pos < 0) {
+    throw std::system_error(errno, std::generic_category(), "Could not find the file length");
+  }
+  _data_length = static_cast<size_t>(pos);
+  lseek(_file_handle, 0, SEEK_SET);
+
+#if HAVE_MMAP
+  // Map the file contents into memory
+  _data = reinterpret_cast<char*>(mmap(nullptr, _data_length, PROT_READ, MAP_SHARED, _file_handle, 0));
+#else
+  // Load the file contents into memory
+  char *data = new char[_data_length];
+  _data = data;
+  read(_file_handle, data, _data_length);
+  close(_file_handle);
+  _file_handle = -1;
+#endif
+}
+
+void Transmitter::FileDescription::_free_file_data()
+{
+  if (!_filename.empty()) {
+#if HAVE_MMAP
+    if (_data) munmap(const_cast<char*>(_data), _data_length);
+    if (_file_handle >= 0) close(_file_handle);
+#else
+    delete[] const_cast<char*>(_data);
+#endif
+    _filename.clear();
+  }
+
+  if (_transfer_data) {
+    delete[] _transfer_data;
+  }
+}
+
+void Transmitter::FileDescription::_calculate_file_entry()
+{
+  // Content length
+  _file_entry.content_length = _data_length;
+
+  // MD5 checksum
+  if (_data && _data_length) {
+    unsigned char md5[MD5_DIGEST_LENGTH];
+    MD5(reinterpret_cast<const unsigned char*>(_data), _data_length, md5);
+    _file_entry.content_md5 = base64_encode(md5, sizeof(md5));
+  }
+}
+
+void Transmitter::FileDescription::_compress_data()
+{
+  // Do nothing if we already have a compressed version
+  if (_transfer_data) return;
+
+  // build compressed version or return the data pointer
+  if (_data) {
+    switch (_compression_type) {
+    case COMPRESSION_GZIP:
+      _gzip_data();
+      break;
+    default:
+      break;
+    }
+  }
+}
+
+void Transmitter::FileDescription::_gzip_data()
+{
+  if (_transfer_data) delete[] _transfer_data;
+  _transfer_length = 0;
+  _transfer_data = nullptr;
+  
+  std::list<std::pair<unsigned char*, uint32_t> > buffers;
+  unsigned char *buffer = new unsigned char[8192];
+
+  z_stream strm = {.next_in = reinterpret_cast<unsigned char*>(const_cast<char*>(_data)),
+                   .avail_in = static_cast<uint32_t>(_data_length), .next_out = buffer, .avail_out = 8192};
+  if (deflateInit2(&strm, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 15 | 16, 8, Z_DEFAULT_STRATEGY) == Z_OK) {
+    while (deflate(&strm, Z_FINISH) != Z_STREAM_END) {
+      buffers.push_back(std::make_pair(buffer, 8192 - strm.avail_out));
+      buffer = new unsigned char[8192];
+      strm.next_out = buffer;
+      strm.avail_out = 8192;
+    }
+    buffers.push_back(std::make_pair(buffer, 8192 - strm.avail_out));
+    deflateEnd(&strm);
+    _transfer_length = strm.total_out;
+    _transfer_data = new char[_transfer_length];
+    auto ptr = _transfer_data;
+    for (auto [buf, len] : buffers) {
+      memcpy(ptr, buf, len);
+      ptr += len;
+      delete[] buf;
+    }
+  }
+
+  _file_entry.transfer_length = _transfer_length;
+  _file_entry.content_encoding = "gzip";
+}
+
+/*****************************************************************************
+ * Transmitter class
+ *****************************************************************************/
+
+Transmitter::Transmitter ( const std::string& address, short port,
+                           uint64_t tsi, unsigned short mtu, uint32_t rate_limit,
+                           boost::asio::io_service& io_service,
+                           const std::optional<boost::asio::ip::udp::endpoint> &tunnel_endpoint,
+                           Transmitter::FdtNamespace fdt_namespace )
     : _endpoint(boost::asio::ip::address::from_string(address), port)
     , _socket(io_service, _endpoint.protocol())
     , _io_service(io_service)
@@ -70,7 +508,10 @@ LibFlute::Transmitter::Transmitter ( const std::string& address, short port,
   _socket.set_option(boost::asio::ip::multicast::enable_loopback(true));
   _socket.set_option(boost::asio::ip::udp::socket::reuse_address(true));
 
-  _fec_oti = FecOti{FecScheme::CompactNoCode, 0, _max_payload, max_source_block_length};
+  _fec_oti = FecOti{
+    .encoding_id = FecScheme::CompactNoCode,
+    .encoding_symbol_length = _max_payload,
+    .max_source_block_length = max_source_block_length};
   _fdt = std::make_unique<FileDeliveryTable>(1, _fec_oti, fdt_namespace);
 
   _fdt_timer.expires_from_now(boost::posix_time::seconds(_fdt_repeat_interval));
@@ -79,20 +520,20 @@ LibFlute::Transmitter::Transmitter ( const std::string& address, short port,
   send_next_packet();
 }
 
-LibFlute::Transmitter::~Transmitter() = default;
+Transmitter::~Transmitter() = default;
 
-auto LibFlute::Transmitter::enable_ipsec(uint32_t spi, const std::string& key) -> void
+auto Transmitter::enable_ipsec(uint32_t spi, const std::string& key) -> void
 {
-  LibFlute::IpSec::enable_esp(spi, _mcast_address, LibFlute::IpSec::Direction::Out, key);
+  IpSec::enable_esp(spi, _mcast_address, IpSec::Direction::Out, key);
 }
 
-auto LibFlute::Transmitter::handle_send_to(const boost::system::error_code& error) -> void
+auto Transmitter::handle_send_to(const boost::system::error_code& error) -> void
 {
   if (!error) {
   }
 }
 
-auto LibFlute::Transmitter::seconds_since_epoch() -> uint64_t
+auto Transmitter::seconds_since_epoch() -> uint64_t
 {
   return std::chrono::duration_cast<std::chrono::seconds>(
       std::chrono::system_clock::now().time_since_epoch()).count() +
@@ -100,7 +541,7 @@ auto LibFlute::Transmitter::seconds_since_epoch() -> uint64_t
                         and the NTP epoch (1 January 1900, 00:00:00 UTC) */
 }
 
-auto LibFlute::Transmitter::send_fdt() -> void {
+auto Transmitter::send_fdt() -> void {
   _fdt->set_expires(seconds_since_epoch() + _fdt_repeat_interval * 2);
   auto fdt = _fdt->to_string();
   auto file = std::make_shared<File>(
@@ -119,7 +560,7 @@ auto LibFlute::Transmitter::send_fdt() -> void {
   }
 }
 
-auto LibFlute::Transmitter::send(
+auto Transmitter::send(
     const std::string& content_location,
     const std::string& content_type,
     uint32_t expires,
@@ -145,14 +586,39 @@ auto LibFlute::Transmitter::send(
   return toi;
 }
 
-auto LibFlute::Transmitter::fdt_send_tick() -> void
+auto Transmitter::send(const std::shared_ptr<Transmitter::FileDescription> &file_description) -> uint16_t
+{
+  if (file_description->has_tsi() && file_description->tsi() != _tsi) {
+    // Reset TOI if the file_description is being used on a new TSI
+    file_description->toi(0);
+  }
+
+  // Set the TSI and TOI for the FileDescription
+  file_description->tsi(_tsi);
+  if (file_description->toi() == 0) {
+    file_description->toi(_toi);
+    _toi++;
+    if (_toi == 0) _toi = 1; // clamp to >= 1 in case it wraps
+  }
+
+  // Copy in default FEC parameters if not already set
+  file_description->merge_fec_oti(_fec_oti);
+
+  auto file = std::make_shared<File>(file_description);
+  _fdt->add(file->meta());
+  send_fdt();
+  _files.insert({file_description->toi(), file});
+  return file_description->toi();
+}
+
+auto Transmitter::fdt_send_tick() -> void
 {
   send_fdt();
   _fdt_timer.expires_from_now(boost::posix_time::seconds(_fdt_repeat_interval));
   _fdt_timer.async_wait( boost::bind(&Transmitter::fdt_send_tick, this));
 }
 
-auto LibFlute::Transmitter::file_transmitted(uint32_t toi) -> void
+auto Transmitter::file_transmitted(uint32_t toi) -> void
 {
   if (toi != 0) {
     _files.erase(toi);
@@ -165,7 +631,7 @@ auto LibFlute::Transmitter::file_transmitted(uint32_t toi) -> void
   }
 }
 
-auto LibFlute::Transmitter::send_next_packet() -> void
+auto Transmitter::send_next_packet() -> void
 {
   uint32_t bytes_queued = 0;
 
@@ -298,3 +764,6 @@ static uint16_t calculate_sum(uint16_t *buffer, size_t len)
 
     return result;
 }
+
+} // End namespace LibFlute
+

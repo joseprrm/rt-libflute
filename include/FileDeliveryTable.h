@@ -17,6 +17,7 @@
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
+#include <optional>
 #include <string>
 #include <vector>
 #include "flute_types.h"
@@ -77,6 +78,13 @@ namespace LibFlute {
         std::string content_type;
         uint64_t expires;
         FecOti fec_oti;
+        struct {
+          bool no_cache;
+          std::optional<uint64_t> cache_expires;
+        } cache_control;
+        std::string content_encoding;
+        std::string etag;
+        uint32_t transfer_length;
       };
 
      /**
@@ -102,7 +110,9 @@ namespace LibFlute {
      /**
       *  Get all current file entries
       */
-      std::vector<FileEntry> file_entries() { return _file_entries; };
+      const std::vector<FileEntry> &file_entries() const {
+        return _file_entries;
+      };
 
     private:
       uint32_t _instance_id;

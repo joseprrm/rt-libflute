@@ -94,7 +94,12 @@ namespace {
     if (pos != std::string::npos) {
       auto prefix = match_name.substr(0,pos);
       match_name.erase(0,pos+1);
-      match_ns = _prefix_to_ns_map.at(prefix);
+      auto it = _prefix_to_ns_map.find(prefix);
+      if (it != _prefix_to_ns_map.end()) {
+        match_ns = _prefix_to_ns_map.at(prefix);
+      } else {
+        match_ns = prefix;
+      }
     }
     return name == match_name && ns == match_ns;
   }
@@ -105,7 +110,13 @@ namespace {
     auto pos = elem_name.find_first_of(':');
     if (pos != std::string::npos) {
       auto elem_prefix = elem_name.substr(0,pos);
-      return _prefix_to_ns_map.at(elem_prefix);
+      auto it = _prefix_to_ns_map.find(elem_prefix);
+      if (it != _prefix_to_ns_map.end()) {
+        return _prefix_to_ns_map.at(elem_prefix);
+      } else {
+        static const std::string unknown("<Unknown>");
+        return unknown;
+      }
     }
     return _default_ns;
   }
@@ -120,8 +131,10 @@ LibFlute::FileDeliveryTable::FileDeliveryTable(uint32_t instance_id, FecOti fec_
 
 LibFlute::FileDeliveryTable::FileDeliveryTable(uint32_t instance_id, char* buffer, size_t len) 
   : _instance_id( instance_id )
+  , _global_fec_oti()
 {
   static const std::string mbms2007_ns("urn:3GPP:metadata:2007:MBMS:FLUTE:FDT"); // 3GPP TS 26.346 Clause 7.2.10.2
+  static const std::string mbms2012_ns("urn:3GPP:metadata:2012:MBMS:FLUTE:FDT"); // 3GPP TS 26.346 Clause 7.2.10.2
   tinyxml2::XMLDocument doc(true, tinyxml2::COLLAPSE_WHITESPACE);
   doc.Parse(buffer, len);
   auto fdt_instance = doc.RootElement();
@@ -149,22 +162,29 @@ LibFlute::FileDeliveryTable::FileDeliveryTable(uint32_t instance_id, char* buffe
 
   spdlog::debug("Received new FDT with instance ID {}: {}", instance_id, buffer);
 
-  uint8_t def_fec_encoding_id = 0;
   auto val = root_ns.findAttribute(fdt_instance, "FEC-OTI-FEC-Encoding-ID", fdt_ns);
   if (val != nullptr) {
-    def_fec_encoding_id = strtoul(val->Value(), nullptr, 0);
+    _global_fec_oti.encoding_id = static_cast<FecScheme>(strtoul(val->Value(), nullptr, 0));
   }
 
-  uint32_t def_fec_max_source_block_length = 0;
+  val = root_ns.findAttribute(fdt_instance, "FEC-OTI-FEC-Instance-ID", fdt_ns);
+  if (val != nullptr) {
+    _global_fec_oti.instance_id = strtoul(val->Value(), nullptr, 0);
+  }
+
   val = root_ns.findAttribute(fdt_instance, "FEC-OTI-Maximum-Source-Block-Length", fdt_ns);
   if (val != nullptr) {
-    def_fec_max_source_block_length = strtoul(val->Value(), nullptr, 0);
+    _global_fec_oti.max_source_block_length = strtoul(val->Value(), nullptr, 0);
   }
 
-  uint32_t def_fec_encoding_symbol_length = 0;
   val = root_ns.findAttribute(fdt_instance, "FEC-OTI-Encoding-Symbol-Length", fdt_ns);
   if (val != nullptr) {
-    def_fec_encoding_symbol_length = strtoul(val->Value(), nullptr, 0);
+    _global_fec_oti.encoding_symbol_length = strtoul(val->Value(), nullptr, 0);
+  }
+
+  val = root_ns.findAttribute(fdt_instance, "FEC-OTI-Max-Number-of-Encoding-Symbols", fdt_ns);
+  if (val != nullptr) {
+    _global_fec_oti.max_number_of_encoding_symbols = strtoul(val->Value(), nullptr, 0);
   }
 
   for (auto file = root_ns.findChildElement(fdt_instance, "File", fdt_ns);
@@ -172,7 +192,7 @@ LibFlute::FileDeliveryTable::FileDeliveryTable(uint32_t instance_id, char* buffe
 
     XMLNamespaces file_ns(file, root_ns);
 
-    // required attributes
+    // File required attributes
     auto toi_str = file_ns.findAttribute(file, "TOI", fdt_ns);
     if (toi_str == nullptr) {
       throw "Missing TOI attribute on File element";
@@ -184,6 +204,7 @@ LibFlute::FileDeliveryTable::FileDeliveryTable(uint32_t instance_id, char* buffe
       throw "Missing Content-Location attribute on File element";
     }
 
+    // File optional attributes
     uint32_t content_length = 0;
     val = file_ns.findAttribute(file, "Content-Length", fdt_ns);
     if (val != nullptr) {
@@ -203,53 +224,103 @@ LibFlute::FileDeliveryTable::FileDeliveryTable(uint32_t instance_id, char* buffe
       content_md5 = "";
     }
 
+    auto content_encoding = file_ns.findAttribute(file, "Content-Encoding", fdt_ns)->Value();
+    if (!content_encoding) {
+      content_encoding = "";
+    }
+
     auto content_type = file_ns.findAttribute(file, "Content-Type", fdt_ns)->Value();
     if (!content_type) {
       content_type = "";
     }
 
-    auto encoding_id = def_fec_encoding_id;
+    auto encoding_id = _global_fec_oti.encoding_id;
     val = file_ns.findAttribute(file, "FEC-OTI-FEC-Encoding-ID", fdt_ns);
     if (val != nullptr) {
-      encoding_id = strtoul(val->Value(), nullptr, 0);
+      encoding_id = static_cast<FecScheme>(strtoul(val->Value(), nullptr, 0));
     }
 
-    auto max_source_block_length = def_fec_max_source_block_length;
+    auto fec_instance_id = _global_fec_oti.instance_id;
+    val = file_ns.findAttribute(file, "FEC-OTI-FEC-Instance-ID", fdt_ns);
+    if (val != nullptr) {
+      fec_instance_id = strtoul(val->Value(), nullptr, 0);
+    }
+
+    auto max_source_block_length = _global_fec_oti.max_source_block_length;
     val = file_ns.findAttribute(file, "FEC-OTI-Maximum-Source-Block-Length", fdt_ns);
     if (val != nullptr) {
       max_source_block_length = strtoul(val->Value(), nullptr, 0);
     }
 
-    auto encoding_symbol_length = def_fec_encoding_symbol_length;
+    auto encoding_symbol_length = _global_fec_oti.encoding_symbol_length;
     val = file_ns.findAttribute(file, "FEC-OTI-Encoding-Symbol-Length", fdt_ns);
     if (val != nullptr) {
       encoding_symbol_length = strtoul(val->Value(), nullptr, 0);
     }
-    uint32_t expires = 0;
+
+    auto max_number_of_encoding_symbols = _global_fec_oti.max_number_of_encoding_symbols;
+    val = file_ns.findAttribute(file, "FEC-OTI-Max-Number-of-Encoding-Symbols", fdt_ns);
+    if (val != nullptr) {
+      max_number_of_encoding_symbols = strtoul(val->Value(), nullptr, 0);
+    }
+
+    auto mbms2012_file_etag = "";
+    val = file_ns.findAttribute(file, "File-ETag", mbms2012_ns);
+    if (val != nullptr) {
+      mbms2012_file_etag = val->Value();
+    }
+
+    // File optional elements
+
+    bool no_cache = false;
+    //bool max_stale = false;
+    std::optional<uint64_t> cache_expires = std::nullopt;
     auto cc = file_ns.findChildElement(file, "Cache-Control", mbms2007_ns);
     if (cc) {
       XMLNamespaces cc_ns(cc, file_ns);
+
+      // mbms2007:Cache-Control optional elements
+
+      auto no_cache_elem = cc_ns.findChildElement(cc, "no-cache", mbms2007_ns);
+      if (no_cache_elem) {
+        no_cache = true;
+      }
+
+      //auto max_stale_elem = cc_ns.findChildElement(cc, "max-stale", mbms2007_ns);
+      //if (max_stale_elem) {
+      //  max_stale = true;
+      //}
+
       auto expires_elem = cc_ns.findChildElement(cc, "Expires", mbms2007_ns);
       if (expires_elem) {
-        expires = strtoul(expires_elem->GetText(), nullptr, 0);
+        cache_expires = strtoul(expires_elem->GetText(), nullptr, 0);
       }
     }
 
     FecOti fec_oti{
-      (FecScheme)encoding_id,
-        transfer_length,
-        encoding_symbol_length,
-        max_source_block_length
+      .encoding_id = (FecScheme)encoding_id,
+      .instance_id = fec_instance_id,
+      .transfer_length = transfer_length,
+      .encoding_symbol_length = encoding_symbol_length,
+      .max_source_block_length = max_source_block_length,
+      .max_number_of_encoding_symbols = max_number_of_encoding_symbols
     };
 
     FileEntry fe{
       toi,
-        std::string(content_location->Value()),
-        content_length,
-        std::string(content_md5),
-        std::string(content_type),
-        expires,
-        fec_oti
+      std::string(content_location->Value()),
+      content_length,
+      std::string(content_md5),
+      std::string(content_type),
+      (cache_expires)?(cache_expires.value()):0,
+      fec_oti,
+      {
+        no_cache,
+        cache_expires
+      },
+      content_encoding,
+      mbms2012_file_etag,
+      transfer_length
     };
     _file_entries.push_back(fe);
   }
@@ -299,9 +370,11 @@ auto LibFlute::FileDeliveryTable::to_string() const -> std::string {
   }
   root->SetAttribute("Expires", std::to_string(_expires).c_str());
   root->SetAttribute("FEC-OTI-FEC-Encoding-ID", (unsigned)_global_fec_oti.encoding_id);
+  if (_global_fec_oti.instance_id) root->SetAttribute("FEC-OTI-FEC-Instance-ID", (unsigned)_global_fec_oti.instance_id);
   root->SetAttribute("FEC-OTI-Maximum-Source-Block-Length", (unsigned)_global_fec_oti.max_source_block_length);
   root->SetAttribute("FEC-OTI-Encoding-Symbol-Length", (unsigned)_global_fec_oti.encoding_symbol_length);
   root->SetAttribute("xmlns:mbms2007", "urn:3GPP:metadata:2007:MBMS:FLUTE:FDT"); // 3GPP TS 26.346 Clause 7.2.10.2
+  root->SetAttribute("xmlns:mbms2012", "urn:3GPP:metadata:2012:MBMS:FLUTE:FDT"); // 3GPP TS 26.346 Clause 7.2.10.2
   doc.InsertEndChild(root);
 
   for (const auto& file : _file_entries) {
@@ -309,14 +382,34 @@ auto LibFlute::FileDeliveryTable::to_string() const -> std::string {
     f->SetAttribute("TOI", file.toi);
     f->SetAttribute("Content-Location", file.content_location.c_str());
     f->SetAttribute("Content-Length", file.content_length);
-    f->SetAttribute("Transfer-Length", (unsigned)file.fec_oti.transfer_length);
-    f->SetAttribute("Content-MD5", file.content_md5.c_str());
-    f->SetAttribute("Content-Type", file.content_type.c_str());
-    auto cc = doc.NewElement("mbms2007:Cache-Control");
-    auto exp = doc.NewElement("mbms2007:Expires");
-    exp->SetText(std::to_string(file.expires).c_str());
-    cc->InsertEndChild(exp);
-    f->InsertEndChild(cc);
+    if (file.transfer_length) f->SetAttribute("Transfer-Length", file.transfer_length);
+    if (!file.content_md5.empty()) f->SetAttribute("Content-MD5", file.content_md5.c_str());
+    if (!file.content_encoding.empty()) f->SetAttribute("Content-Encoding", file.content_encoding.c_str());
+    if (!file.content_type.empty()) f->SetAttribute("Content-Type", file.content_type.c_str());
+    if (file.fec_oti.encoding_id != _global_fec_oti.encoding_id)
+      f->SetAttribute("FEC-OTI-FEC-Encoding-ID", (unsigned)file.fec_oti.encoding_id);
+    if (file.fec_oti.instance_id != 0 && file.fec_oti.instance_id != _global_fec_oti.instance_id)
+      f->SetAttribute("FEC-OTI-FEC-Instance-ID", (unsigned)file.fec_oti.instance_id);
+    if (file.fec_oti.max_source_block_length != 0 &&
+        file.fec_oti.max_source_block_length != _global_fec_oti.max_source_block_length)
+      f->SetAttribute("FEC-OTI-Maximum-Source-Block-Length", (unsigned)file.fec_oti.max_source_block_length);
+    if (file.fec_oti.encoding_symbol_length != 0 &&
+        file.fec_oti.encoding_symbol_length != _global_fec_oti.encoding_symbol_length)
+      f->SetAttribute("FEC-OTI-Encoding-Symbol-Length", (unsigned)file.fec_oti.encoding_symbol_length);
+    if (!file.etag.empty()) f->SetAttribute("mbms2012:File-ETag", file.etag.c_str());
+    if (file.cache_control.no_cache || file.cache_control.cache_expires) {
+      auto cc = doc.NewElement("mbms2007:Cache-Control");
+      if (file.cache_control.no_cache) {
+        auto noc = doc.NewElement("mbms2007:no-cache");
+        noc->SetText("true");
+        cc->InsertEndChild(noc);
+      } else {
+        auto exp = doc.NewElement("mbms2007:Expires");
+        exp->SetText(std::to_string(file.expires).c_str());
+        cc->InsertEndChild(exp);
+      }
+      f->InsertEndChild(cc);
+    }
     root->InsertEndChild(f);
   }
 

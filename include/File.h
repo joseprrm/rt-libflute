@@ -9,7 +9,7 @@
 // agreed to in writing, software distributed under the License is distributed on
 // an “AS IS” BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied.
-// 
+//
 // See the License for the specific language governing permissions and limitations
 // under the License.
 //
@@ -21,6 +21,7 @@
 #include "AlcPacket.h"
 #include "FileDeliveryTable.h"
 #include "EncodingSymbol.h"
+#include "Transmitter.h"
 
 namespace LibFlute {
   /**
@@ -36,6 +37,13 @@ namespace LibFlute {
       File(LibFlute::FileDeliveryTable::FileEntry entry);
 
      /**
+      *  Create a file from a Transmitter::FileDescription (used for transmission)
+      *
+      *  @param file_description Transmitter File Description
+      */
+      File(const std::shared_ptr<Transmitter::FileDescription> &file_description);
+
+     /**
       *  Create a file from the given parameters (used for transmission)
       *
       *  @param toi TOI of the file
@@ -44,10 +52,10 @@ namespace LibFlute {
       *  @param expires Expiry value (in seconds since the NTP epoch)
       *  @param data Pointer to the data buffer
       *  @param length Length of the buffer
-      *  @param copy_data Copy the buffer. If false (the default), the caller must ensure the buffer remains valid 
+      *  @param copy_data Copy the buffer. If false (the default), the caller must ensure the buffer remains valid
       *                   while the file is being transmitted.
       */
-      File(uint32_t toi, 
+      File(uint32_t toi,
           FecOti fec_oti,
           std::string content_location,
           std::string content_type,
@@ -79,7 +87,14 @@ namespace LibFlute {
      /**
       *  Get the data buffer length
       */
-      size_t length() const { return _meta.fec_oti.transfer_length; };
+      size_t length() const { return _been_decoded?_meta.content_length:_meta.fec_oti.transfer_length; };
+
+     /**
+      *  Decode the buffer using the Content-Encoding
+      *
+      *  Will check the MD5 sum after decoding, if present.
+      */
+      void decode();
 
      /**
       *  Get the FEC OTI values
@@ -156,11 +171,14 @@ namespace LibFlute {
 
       char* _buffer = nullptr;
       bool _own_buffer = false;
+      bool _been_decoded = false;
 
       LibFlute::FileDeliveryTable::FileEntry _meta;
       unsigned long _received_at;
       unsigned _access_count = 0;
 
       uint16_t _fdt_instance_id = 0;
+
+      std::shared_ptr<Transmitter::FileDescription> _file_description;
   };
 };

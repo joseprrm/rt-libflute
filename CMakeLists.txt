@@ -2,19 +2,23 @@ cmake_minimum_required(VERSION 3.16)
 
 project (libflute VERSION 0.11.0)
 
+include(CheckCXXSymbolExists)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 set(CMAKE_CXX_FLAGS_DEBUG_INIT "-Wall -Wextra -Werror -g3")
 set(CMAKE_CXX_FLAGS_RELEASE_INIT "-Wall -O3")
 
-find_package(Boost REQUIRED)
+find_package(Boost CONFIG REQUIRED)
 find_package(spdlog REQUIRED)
 find_package(PkgConfig REQUIRED)
 find_package(OpenSSL REQUIRED)
 pkg_check_modules(TINYXML REQUIRED IMPORTED_TARGET tinyxml2)
 pkg_check_modules(NETLINK REQUIRED IMPORTED_TARGET libnl-3.0)
 pkg_check_modules(LIBCONFIG REQUIRED IMPORTED_TARGET libconfig++)
+pkg_check_modules(ZLIB REQUIRED IMPORTED_TARGET zlib)
+check_cxx_symbol_exists(mmap "sys/mman.h" HAVE_MMAP)
 
 add_subdirectory(examples)
 
@@ -36,6 +40,10 @@ link_directories(
 set(CMAKE_CXX_CLANG_TIDY clang-tidy)
 
 add_library(flute "")
+if (HAVE_MMAP)
+    target_compile_definitions(flute PRIVATE HAVE_MMAP=1)
+endif()
+
 target_sources(flute
   PRIVATE
   src/Receiver.cpp src/Transmitter.cpp src/AlcPacket.cpp src/File.cpp src/EncodingSymbol.cpp src/FileDeliveryTable.cpp src/IpSec.cpp
@@ -58,5 +66,6 @@ target_link_libraries( flute
     crypto
     PkgConfig::TINYXML
     PkgConfig::NETLINK
+    PkgConfig::ZLIB
 )
 
