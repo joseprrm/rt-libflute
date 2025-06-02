@@ -17,7 +17,6 @@
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
-#include <map>
 #include <string>
 #include <vector>
 #include "flute_types.h"
