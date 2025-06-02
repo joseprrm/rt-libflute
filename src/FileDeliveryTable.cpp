@@ -121,7 +121,7 @@ LibFlute::FileDeliveryTable::FileDeliveryTable(uint32_t instance_id, FecOti fec_
 LibFlute::FileDeliveryTable::FileDeliveryTable(uint32_t instance_id, char* buffer, size_t len) 
   : _instance_id( instance_id )
 {
-  static const std::string mbms2007_ns("urn:3GPP:metadata:2007:MBMS:FLUTE:FDT");
+  static const std::string mbms2007_ns("urn:3GPP:metadata:2007:MBMS:FLUTE:FDT"); // 3GPP TS 26.346 Clause 7.2.10.2
   tinyxml2::XMLDocument doc(true, tinyxml2::COLLAPSE_WHITESPACE);
   doc.Parse(buffer, len);
   auto fdt_instance = doc.RootElement();
@@ -133,13 +133,13 @@ LibFlute::FileDeliveryTable::FileDeliveryTable(uint32_t instance_id, char* buffe
 
   if (fdt_ns == "") {
     _fdt_namespace = FDT_NS_NONE;
-  } else if (fdt_ns == "http://www.example.com/flute") {
+  } else if (fdt_ns == "http://www.example.com/flute") { // RFC 3926 Section 3.4.2
     _fdt_namespace = FDT_NS_RFC3926;
-  } else if (fdt_ns == "urn:IETF:metadata:2005:FLUTE:FDT") {
+  } else if (fdt_ns == "urn:IETF:metadata:2005:FLUTE:FDT") { // 3GPP TS 26.346 Clause 7.2.10.1
     _fdt_namespace = FDT_NS_DRAFT_2005;
-//  } else if (fdt_ns == "urn:ietf:params:xml:ns:fdt") { // FLUTEv2 - needs more work
+//  } else if (fdt_ns == "urn:ietf:params:xml:ns:fdt") { // RFC 6726 - FLUTEv2 - needs more work
 //    _fdt_namespace = FDT_NS_RFC6726;
-  } else if (fdt_ns == "urn:3GPP:metadata:2022:FLUTE:FDT") {
+  } else if (fdt_ns == "urn:3GPP:metadata:2022:FLUTE:FDT") { // 3GPP TS 26.346 Clause L.6.1
     _fdt_namespace = FDT_NS_3GPP_CONSOLIDATED_V2;
   } else {
     throw "FDT namespace not recognised";
@@ -279,15 +279,19 @@ auto LibFlute::FileDeliveryTable::to_string() const -> std::string {
   auto root = doc.NewElement("FDT-Instance");
   switch (_fdt_namespace) {
     case FDT_NS_RFC3926:
+      // RFC 3926 Section 3.4.2
       root->SetAttribute("xmlns", "http://www.example.com/flute");
       break;
     case FDT_NS_DRAFT_2005:
+      // 3GPP TS 26.346 Clause 7.2.10.1
       root->SetAttribute("xmlns", "urn:IETF:metadata:2005:FLUTE:FDT");
       break;
 //    case FDT_NS_RFC6726:  // FLUTE v2 - Will need other things implementing to use this
+//      // RFC 6726
 //      root->SetAttribute("xmlns", "urn:ietf:params:xml:ns:fdt");
 //      break;
     case FDT_NS_3GPP_CONSOLIDATED_V2:
+      // 3GPP TS 26.346 Clause L.6.1
       root->SetAttribute("xmlns", "urn:3GPP:metadata:2022:FLUTE:FDT");
       break;
     default:
@@ -297,7 +301,7 @@ auto LibFlute::FileDeliveryTable::to_string() const -> std::string {
   root->SetAttribute("FEC-OTI-FEC-Encoding-ID", (unsigned)_global_fec_oti.encoding_id);
   root->SetAttribute("FEC-OTI-Maximum-Source-Block-Length", (unsigned)_global_fec_oti.max_source_block_length);
   root->SetAttribute("FEC-OTI-Encoding-Symbol-Length", (unsigned)_global_fec_oti.encoding_symbol_length);
-  root->SetAttribute("xmlns:mbms2007", "urn:3GPP:metadata:2007:MBMS:FLUTE:FDT");
+  root->SetAttribute("xmlns:mbms2007", "urn:3GPP:metadata:2007:MBMS:FLUTE:FDT"); // 3GPP TS 26.346 Clause 7.2.10.2
   doc.InsertEndChild(root);
 
   for (const auto& file : _file_entries) {
