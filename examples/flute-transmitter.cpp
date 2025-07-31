@@ -62,6 +62,7 @@ static struct argp_option options[] = {  // NOLINT
     {"gzip", 'g', nullptr, 0, "Use gzip to compress the contents, implies -n option", 0},
     {"tsi", 'T', "ID", 0, "The TSI to use for the FLUTE session (default: 16)", 0},
     {"new-api", 'n', nullptr, 0, "Use the new FileDescription API", 0},
+    {"retransmit", 'R', "COUNT", 0, "Number of times to repeatedly transmit a file (default: 1)", 0},
     {nullptr, 0, nullptr, 0, nullptr, 0}};
 
 /**
@@ -77,6 +78,7 @@ struct ft_arguments {
   unsigned short mtu = 1500;
   uint32_t rate_limit = 1000;
   uint64_t tsi = 16;
+  size_t retransmit_count = 1;
   unsigned log_level = 2;        /**< log level */
   char **files;
 };
@@ -116,6 +118,9 @@ static auto parse_opt(int key, char *arg, struct argp_state *state) -> error_t {
     case 'n':
       arguments->new_api = true;
       break;
+    case 'R':
+      arguments->retransmit_count = static_cast<size_t>(strtoul(arg, nullptr, 10));
+      break;
     case ARGP_KEY_NO_ARGS:
       argp_usage (state);
     case ARGP_KEY_ARG:
@@ -143,7 +148,13 @@ void print_version(FILE *stream, struct argp_state * /*state*/) {
 
 static void send_with_new_api(struct ft_arguments &arguments)
 {
-  std::list<std::shared_ptr<LibFlute::Transmitter::FileDescription> > files;
+  struct fileEntry {
+    fileEntry(LibFlute::Transmitter::FileDescription *fd, size_t init_count = 0) :file(fd), transmitted_count(init_count) {};
+    std::shared_ptr<LibFlute::Transmitter::FileDescription> file;
+    size_t transmitted_count;
+  };
+    
+  std::list<fileEntry> files;
 
   for (int j = 0; arguments.files[j]; j++) {
     auto fd = new LibFlute::Transmitter::FileDescription(arguments.files[j], arguments.files[j]);
@@ -175,19 +186,22 @@ static void send_with_new_api(struct ft_arguments &arguments)
 
   // Register a completion callback
   transmitter.register_completion_callback(
-        [&files](uint32_t toi) {
-          for (auto& file : files) {
-            if (file->toi() == toi) {
-              spdlog::info("{} (TOI {}) has been transmitted", file->file_entry().content_location, file->toi());
-              // could file.reset() to free the FileDescription here.
+        [&files, &arguments, &transmitter](uint32_t toi) {
+          for (auto& f : files) {
+            if (f.file->toi() == toi) {
+              spdlog::info("{} (TOI {}) has been transmitted", f.file->file_entry().content_location, f.file->toi());
+              f.transmitted_count++;
+              if (f.transmitted_count < arguments.retransmit_count) {
+		transmitter.send(f.file);
+              }
             }
           }
         });
 
   // Queue all the files 
   for (const auto& file : files) {
-    auto toi = transmitter.send( file );
-    const auto &file_entry = file->file_entry();
+    auto toi = transmitter.send( file.file );
+    const auto &file_entry = file.file->file_entry();
     spdlog::info("Queued {} ({} bytes ({} bytes transmitted)) for transmission, TOI is {}",
           file_entry.content_location, file_entry.content_length, file_entry.fec_oti.transfer_length, toi);
   }
