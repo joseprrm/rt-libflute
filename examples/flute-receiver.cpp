@@ -52,6 +52,7 @@ static struct argp_option options[] = {  // NOLINT
      "Log verbosity: 0 = trace, 1 = debug, 2 = info, 3 = warn, 4 = error, 5 = "
      "critical, 6 = none. Default: 2.",
      0},
+    {"tsi", 'T', "ID", 0, "The TSI to use for the FLUTE session (default: 16)", 0},
     {nullptr, 0, nullptr, 0, nullptr, 0}};
 
 /**
@@ -65,6 +66,7 @@ struct ft_arguments {
   unsigned short mcast_port = 40085;
   unsigned log_level = 2;        /**< log level */
   char **files;
+  uint64_t tsi = 16;
 };
 
 /**
@@ -88,6 +90,9 @@ static auto parse_opt(int key, char *arg, struct argp_state *state) -> error_t {
       break;
     case 'l':
       arguments->log_level = static_cast<unsigned>(strtoul(arg, nullptr, 10));
+      break;
+    case 'T':
+      arguments->tsi = static_cast<uint64_t>(strtoul(arg, nullptr, 10));
       break;
     default:
       return ARGP_ERR_UNKNOWN;
@@ -145,7 +150,7 @@ auto main(int argc, char **argv) -> int {
         arguments.flute_interface,
         arguments.mcast_target,
         (short)arguments.mcast_port,
-        16,
+        arguments.tsi,
         io);
 
     // Configure IPSEC, if enabled
