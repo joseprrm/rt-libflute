@@ -84,7 +84,9 @@ namespace LibFlute {
         } cache_control;
         std::string content_encoding;
         std::string etag;
-        uint32_t transfer_length;
+
+        bool operator==(const FileEntry &other) const;
+        bool operator!=(const FileEntry &other) const { return !(*this == other); };
       };
 
      /**

@@ -122,6 +122,15 @@ namespace {
   }
 }
 
+bool LibFlute::FileDeliveryTable::FileEntry::operator==(const LibFlute::FileDeliveryTable::FileEntry &other) const
+{
+  return toi == other.toi && content_length == other.content_length && expires == other.expires &&
+         cache_control.no_cache == other.cache_control.no_cache && fec_oti == other.fec_oti &&
+         cache_control.cache_expires == other.cache_control.cache_expires && content_location == other.content_location &&
+         content_md5 == other.content_md5 && content_type == other.content_type && content_encoding == other.content_encoding &&
+         etag == other.etag;
+}
+
 LibFlute::FileDeliveryTable::FileDeliveryTable(uint32_t instance_id, FecOti fec_oti, FdtNamespace fdt_namespace)
   : _instance_id( instance_id )
   , _global_fec_oti( fec_oti )
@@ -319,8 +328,7 @@ LibFlute::FileDeliveryTable::FileDeliveryTable(uint32_t instance_id, char* buffe
         cache_expires
       },
       content_encoding,
-      mbms2012_file_etag,
-      transfer_length
+      mbms2012_file_etag
     };
     _file_entries.push_back(fe);
   }
@@ -382,7 +390,7 @@ auto LibFlute::FileDeliveryTable::to_string() const -> std::string {
     f->SetAttribute("TOI", file.toi);
     f->SetAttribute("Content-Location", file.content_location.c_str());
     f->SetAttribute("Content-Length", file.content_length);
-    if (file.transfer_length) f->SetAttribute("Transfer-Length", file.transfer_length);
+    if (file.fec_oti.transfer_length) f->SetAttribute("Transfer-Length", file.fec_oti.transfer_length);
     if (!file.content_md5.empty()) f->SetAttribute("Content-MD5", file.content_md5.c_str());
     if (!file.content_encoding.empty()) f->SetAttribute("Content-Encoding", file.content_encoding.c_str());
     if (!file.content_type.empty()) f->SetAttribute("Content-Type", file.content_type.c_str());

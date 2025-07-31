@@ -75,8 +75,10 @@ File::File(const std::shared_ptr<Transmitter::FileDescription> &file_description
     throw "Unsupported FEC scheme";
   }
 
-  this->calculate_partitioning();
-  this->create_blocks();
+  encode();
+
+  calculate_partitioning();
+  create_blocks();
 }
 
 File::File(uint32_t toi,
@@ -269,6 +271,61 @@ auto File::mark_completed(const std::vector<EncodingSymbol>& symbols, bool succe
   }
 }
 
+auto File::encode() -> void
+{
+  if (!_been_encoded && !_meta.content_encoding.empty()) {
+    if (_meta.content_encoding == "gzip" || _meta.content_encoding=="deflate") {
+      auto decomp_buffer = _buffer;
+      bool own_decomp = _own_buffer;
+      std::shared_ptr<unsigned char> comp_buffer(new unsigned char[16384]);
+      z_stream zs = {
+        .next_in = reinterpret_cast<unsigned char*>(decomp_buffer),
+        .avail_in = static_cast<uint32_t>(_meta.content_length),
+        .next_out = comp_buffer.get(),
+        .avail_out = 16384
+      };
+      spdlog::debug("Compressing contents with {}", _meta.content_encoding);
+
+      if (deflateInit2(&zs, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 15 | 16, 8, Z_DEFAULT_STRATEGY) == Z_OK) {
+        _buffer = nullptr;
+        auto zstate = deflate(&zs, Z_FINISH);
+        size_t last_out = 0;
+        while (zstate == Z_OK) {
+          spdlog::debug("Part compressed: {} bytes", 16384-zs.avail_out);
+          _buffer = reinterpret_cast<char*>(realloc(_buffer, zs.total_out));
+          memcpy(_buffer+last_out, comp_buffer.get(), 16384-zs.avail_out);
+          last_out = zs.total_out;
+          _own_buffer = true;
+          zs.avail_out = 16384;
+          zs.next_out = comp_buffer.get();
+          zstate = inflate(&zs, Z_FINISH);
+        }
+        if (zstate==Z_STREAM_END) {
+          if (last_out != zs.total_out) {
+            spdlog::debug("Finish compress, last block is {} bytes. Total {} bytes", 16384-zs.avail_out, zs.total_out);
+            _buffer = reinterpret_cast<char*>(realloc(_buffer, zs.total_out));
+            memcpy(_buffer+last_out, comp_buffer.get(), 16384-zs.avail_out);
+            _own_buffer = true;
+          }
+          _meta.fec_oti.transfer_length = zs.total_out;
+        } else {
+          spdlog::error("Error compressing file {}: {}", _meta.toi, zs.msg);
+          throw zs.msg;
+        }
+        deflateEnd(&zs);
+
+        if (own_decomp) free(decomp_buffer);
+      }
+    } else {
+      spdlog::error("Unknown Content-Encoding {}", _meta.content_encoding);
+      throw "Content-Encoding not known";
+    }
+
+    _been_encoded = true;
+    _been_decoded = false;
+  }
+}
+
 auto File::decode() -> void
 {
   if (!_been_decoded && !_meta.content_encoding.empty()) {
@@ -305,6 +362,11 @@ auto File::decode() -> void
           memcpy(_buffer+last_out, decomp_buffer.get(), 16384-zs.avail_out);
           _own_buffer = true;
         }
+        if (!_meta.content_length) {
+          _meta.content_length = zs.total_out;
+        } else if (_meta.content_length != zs.total_out) {
+          spdlog::error("Decompressed length does not match expected Content-Length ({} != {})", _meta.content_length, zs.total_out);
+        }
       } else {
         spdlog::error("Error decompressing file {}: {}", _meta.toi, zs.msg);
 	throw zs.msg;
@@ -317,6 +379,7 @@ auto File::decode() -> void
     }
 
     _been_decoded = true;
+    _been_encoded = false;
 
     // Check MD5
     if (!_meta.content_md5.empty()) {

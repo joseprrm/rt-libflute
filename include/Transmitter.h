@@ -51,7 +51,8 @@ namespace LibFlute {
 
         enum CompressionAlgorithm {
           COMPRESSION_NONE = 0,  //< No compression
-          COMPRESSION_GZIP       //< Use gzip compression when encoding the file
+          COMPRESSION_GZIP,      //< Use gzip compression when encoding the file
+          COMPRESSION_DEFLATE    //< Use deflate compression when encoding the file
         };
 
         FileDescription() = delete;
@@ -311,8 +312,6 @@ namespace LibFlute {
         void _attach_file(const std::string &filename);
         void _free_file_data();
         void _calculate_file_entry();
-        void _compress_data();
-        void _gzip_data();
 
         std::optional<uint64_t> _tsi; //< The last TSI this file was associated with
         FileDeliveryTable::FileEntry _file_entry; //< The FDT File entry values to use
@@ -321,8 +320,6 @@ namespace LibFlute {
         int _file_handle;                         //< The file handle of the open _filename
         const char *_data;                        //< The uncompressed file contents (may be mapped file)
         size_t _data_length;                      //< The length of the uncompressed file contents
-        char *_transfer_data;                     //< The compressed file contents or `NULL` if compression has not been applied or is not needed
-        size_t _transfer_length;                  //< Length in bytes of the compressed contents if _transfer_data is not `NULL`.
       };
 
      /**

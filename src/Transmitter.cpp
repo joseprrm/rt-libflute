@@ -66,8 +66,6 @@ Transmitter::FileDescription::FileDescription ( const std::string &content_locat
     , _file_handle(-1)
     , _data(nullptr)
     , _data_length(0)
-    , _transfer_data(nullptr)
-    , _transfer_length(0)
 {
   _attach_file(filename);
   _calculate_file_entry();
@@ -81,8 +79,6 @@ Transmitter::FileDescription::FileDescription(const std::string &content_locatio
     , _file_handle(-1)
     , _data(data.data())
     , _data_length(data.size())
-    , _transfer_data(nullptr)
-    , _transfer_length(0)
 {
   _calculate_file_entry();
 }
@@ -95,8 +91,6 @@ Transmitter::FileDescription::FileDescription(const std::string &content_locatio
     , _file_handle(-1)
     , _data(data)
     , _data_length(length)
-    , _transfer_data(nullptr)
-    , _transfer_length(0)
 {
   _calculate_file_entry();
 }
@@ -109,8 +103,6 @@ Transmitter::FileDescription::FileDescription(const std::string &content_locatio
     , _file_handle(-1)
     , _data(nullptr)
     , _data_length(0)
-    , _transfer_data(nullptr)
-    , _transfer_length(0)
 {
   _calculate_file_entry();
 }
@@ -123,8 +115,6 @@ Transmitter::FileDescription::FileDescription(const Transmitter::FileDescription
     , _file_handle(-1)
     , _data(other._data)
     , _data_length(other._data_length)
-    , _transfer_data(nullptr)
-    , _transfer_length(0)
 {
   if (!_filename.empty()) {
     if (other._file_handle >= 0) {
@@ -150,13 +140,9 @@ Transmitter::FileDescription::FileDescription(Transmitter::FileDescription &&oth
     , _file_handle(other._file_handle)
     , _data(other._data)
     , _data_length(other._data_length)
-    , _transfer_data(other._transfer_data)
-    , _transfer_length(other._transfer_length)
 {
   other._data = nullptr;
   other._data_length = 0;
-  other._transfer_data = nullptr;
-  other._transfer_length = 0;
   other._file_handle = -1;
 }
 
@@ -174,8 +160,6 @@ Transmitter::FileDescription &Transmitter::FileDescription::operator=(const Tran
   _file_handle = -1;
   _data = other._data;
   _data_length = other._data_length;
-  _transfer_data = nullptr;
-  _transfer_length = 0;
 
   if (!_filename.empty()) {
     if (other._file_handle >= 0) {
@@ -209,11 +193,6 @@ Transmitter::FileDescription &Transmitter::FileDescription::operator=(Transmitte
   _data_length = other._data_length;
   other._data_length = 0;
 
-  _transfer_data = other._transfer_data;
-  other._transfer_data = nullptr;
-  _transfer_length = other._transfer_length;
-  other._transfer_length = 0;
-
   return *this;
 }
 
@@ -223,11 +202,7 @@ bool Transmitter::FileDescription::operator==(const Transmitter::FileDescription
   if (_compression_type != other._compression_type) return false;
 
   // _file_entry
-  if (_file_entry.toi != other._file_entry.toi) return false;
-  if (_file_entry.expires != other._file_entry.expires) return false;
-  if (_file_entry.fec_oti != other._file_entry.fec_oti) return false;
-  if (_file_entry.content_location != other._file_entry.content_location) return false;
-  if (_file_entry.content_type != other._file_entry.content_type) return false;
+  if (_file_entry != other._file_entry) return false;
 
   //if (_filename != other._filename) return false;
 
@@ -239,19 +214,11 @@ bool Transmitter::FileDescription::operator==(const Transmitter::FileDescription
 
 const char *Transmitter::FileDescription::data()
 {
-  _compress_data();
-  // If we have a compressed version cached, return that
-  if (_transfer_data) return _transfer_data;
-  // ...otherwise return the uncompressed data
   return _data;
 }
 
 size_t Transmitter::FileDescription::data_length()
 {
-  _compress_data();
-  // If we have a compressed version cached, return the compressed length
-  if (_transfer_data) return _transfer_length;
-  // ...otherwise return the length of the uncompressed data
   return _data_length;
 }
 
@@ -259,12 +226,17 @@ Transmitter::FileDescription &Transmitter::FileDescription::set_compression(
 								Transmitter::FileDescription::CompressionAlgorithm compression)
 {
   if (compression != _compression_type) {
-    if (_transfer_data) {
-	delete[] _transfer_data;
-	_transfer_data = nullptr;
-        _transfer_length = 0;
-    }
     _compression_type = compression;
+    switch (_compression_type) {
+    case COMPRESSION_GZIP:
+      _file_entry.content_encoding = "gzip";
+      break;
+    case COMPRESSION_DEFLATE:
+      _file_entry.content_encoding = "deflate";
+      break;
+    default:
+      break;
+    }
   }
 
   return *this;
@@ -343,9 +315,9 @@ Transmitter::FileDescription &Transmitter::FileDescription::merge_fec_oti(const 
   if (!_file_entry.fec_oti.instance_id) {
     _file_entry.fec_oti.instance_id = fec_oti.instance_id;
   }
-  //if (!_file_entry.fec_oti.transfer_length) {
-  //  _file_entry.fec_oti.transfer_length = fec_oti.transfer_length;
-  //}
+  if (!_file_entry.fec_oti.transfer_length) {
+    _file_entry.fec_oti.transfer_length = fec_oti.transfer_length;
+  }
   if (!_file_entry.fec_oti.encoding_symbol_length) {
     _file_entry.fec_oti.encoding_symbol_length = fec_oti.encoding_symbol_length;
   }
@@ -397,10 +369,6 @@ void Transmitter::FileDescription::_free_file_data()
 #endif
     _filename.clear();
   }
-
-  if (_transfer_data) {
-    delete[] _transfer_data;
-  }
 }
 
 void Transmitter::FileDescription::_calculate_file_entry()
@@ -414,57 +382,6 @@ void Transmitter::FileDescription::_calculate_file_entry()
     MD5(reinterpret_cast<const unsigned char*>(_data), _data_length, md5);
     _file_entry.content_md5 = base64_encode(md5, sizeof(md5));
   }
-}
-
-void Transmitter::FileDescription::_compress_data()
-{
-  // Do nothing if we already have a compressed version
-  if (_transfer_data) return;
-
-  // build compressed version or return the data pointer
-  if (_data) {
-    switch (_compression_type) {
-    case COMPRESSION_GZIP:
-      _gzip_data();
-      break;
-    default:
-      break;
-    }
-  }
-}
-
-void Transmitter::FileDescription::_gzip_data()
-{
-  if (_transfer_data) delete[] _transfer_data;
-  _transfer_length = 0;
-  _transfer_data = nullptr;
-  
-  std::list<std::pair<unsigned char*, uint32_t> > buffers;
-  unsigned char *buffer = new unsigned char[8192];
-
-  z_stream strm = {.next_in = reinterpret_cast<unsigned char*>(const_cast<char*>(_data)),
-                   .avail_in = static_cast<uint32_t>(_data_length), .next_out = buffer, .avail_out = 8192};
-  if (deflateInit2(&strm, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 15 | 16, 8, Z_DEFAULT_STRATEGY) == Z_OK) {
-    while (deflate(&strm, Z_FINISH) != Z_STREAM_END) {
-      buffers.push_back(std::make_pair(buffer, 8192 - strm.avail_out));
-      buffer = new unsigned char[8192];
-      strm.next_out = buffer;
-      strm.avail_out = 8192;
-    }
-    buffers.push_back(std::make_pair(buffer, 8192 - strm.avail_out));
-    deflateEnd(&strm);
-    _transfer_length = strm.total_out;
-    _transfer_data = new char[_transfer_length];
-    auto ptr = _transfer_data;
-    for (auto [buf, len] : buffers) {
-      memcpy(ptr, buf, len);
-      ptr += len;
-      delete[] buf;
-    }
-  }
-
-  _file_entry.transfer_length = _transfer_length;
-  _file_entry.content_encoding = "gzip";
 }
 
 /*****************************************************************************

@@ -90,6 +90,11 @@ namespace LibFlute {
       size_t length() const { return _been_decoded?_meta.content_length:_meta.fec_oti.transfer_length; };
 
      /**
+      *  Encode the buffer using the Content-Encoding
+      */
+      void encode();
+
+     /**
       *  Decode the buffer using the Content-Encoding
       *
       *  Will check the MD5 sum after decoding, if present.
@@ -171,6 +176,7 @@ namespace LibFlute {
 
       char* _buffer = nullptr;
       bool _own_buffer = false;
+      bool _been_encoded = false;
       bool _been_decoded = false;
 
       LibFlute::FileDeliveryTable::FileEntry _meta;

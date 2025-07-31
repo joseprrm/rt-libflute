@@ -189,7 +189,7 @@ static void send_with_new_api(struct ft_arguments &arguments)
     auto toi = transmitter.send( file );
     const auto &file_entry = file->file_entry();
     spdlog::info("Queued {} ({} bytes ({} bytes transmitted)) for transmission, TOI is {}",
-          file_entry.content_location, file_entry.content_length, file_entry.transfer_length, toi);
+          file_entry.content_location, file_entry.content_length, file_entry.fec_oti.transfer_length, toi);
   }
 
   // Start the io_service, and thus sending data
