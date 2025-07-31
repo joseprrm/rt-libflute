@@ -161,8 +161,8 @@ auto main(int argc, char **argv) -> int {
 
     receiver.register_completion_callback(
         [](std::shared_ptr<LibFlute::File> file) { //NOLINT
-        spdlog::info("{} (TOI {}) has been received",
-            file->meta().content_location, file->meta().toi);
+        spdlog::info("{} (TOI {}{}{}) has been received",
+            file->meta().content_location, file->meta().toi, file->meta().etag.empty()?"":", ETag = ", file->meta().etag);
         FILE* fd = fopen(file->meta().content_location.c_str(), "wb");
         fwrite(file->buffer(), 1, file->length(), fd);
         fclose(fd);

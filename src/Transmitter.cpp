@@ -26,7 +26,7 @@
 // Suppress warnings about MD5 being deprecated in later versions of OpenSSL
 #define OPENSSL_SUPPRESS_DEPRECATED 1
 #include <openssl/md5.h>
-#include "base64.h"
+#include "../utils/base64.h"
 
 #include <zlib.h>
 
@@ -305,6 +305,17 @@ Transmitter::FileDescription::date_time_type Transmitter::FileDescription::get_e
 {
   auto durn = std::chrono::duration_cast<date_time_type::duration>(std::chrono::seconds(_file_entry.expires));
   return _get_ntp_epoch() + durn;
+}
+
+Transmitter::FileDescription &Transmitter::FileDescription::set_etag(const std::string &etag)
+{
+  _file_entry.etag = etag;
+  return *this;
+}
+
+const std::string &Transmitter::FileDescription::get_etag() const
+{
+  return _file_entry.etag;
 }
 
 Transmitter::FileDescription &Transmitter::FileDescription::merge_fec_oti(const FecOti &fec_oti)

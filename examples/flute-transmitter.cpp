@@ -29,12 +29,14 @@
 
 #include <libconfig.h++>
 #include <boost/asio.hpp>
+#include <openssl/sha.h>
 
 #include "spdlog/async.h"
 #include "spdlog/spdlog.h"
 #include "spdlog/sinks/syslog_sink.h"
 
 #include "Version.h"
+#include "../utils/base64.h"
 #include "Transmitter.h"
 
 
@@ -62,7 +64,8 @@ static struct argp_option options[] = {  // NOLINT
     {"gzip", 'g', nullptr, 0, "Use gzip to compress the contents, implies -n option", 0},
     {"tsi", 'T', "ID", 0, "The TSI to use for the FLUTE session (default: 16)", 0},
     {"new-api", 'n', nullptr, 0, "Use the new FileDescription API", 0},
-    {"retransmit", 'R', "COUNT", 0, "Number of times to repeatedly transmit a file (default: 1)", 0},
+    {"retransmit", 'R', "COUNT", 0, "Number of times to repeatedly transmit a file, implies -n option (default: 1)", 0},
+    {"etags", 'e', nullptr, 0, "Enable generation of ETag values for each file, implies -n option (default: no ETags)", 0},
     {nullptr, 0, nullptr, 0, nullptr, 0}};
 
 /**
@@ -73,6 +76,7 @@ struct ft_arguments {
   bool enable_ipsec = false;
   bool use_gzip = false;
   bool new_api = false;
+  bool gen_etags = false;
   const char *aes_key = {};
   unsigned short mcast_port = 40085;
   unsigned short mtu = 1500;
@@ -89,6 +93,10 @@ struct ft_arguments {
 static auto parse_opt(int key, char *arg, struct argp_state *state) -> error_t {
   auto arguments = static_cast<struct ft_arguments *>(state->input);
   switch (key) {
+    case 'e':
+      arguments->gen_etags = true;
+      arguments->new_api = true;
+      break;
     case 'm':
       arguments->mcast_target = arg;
       break;
@@ -120,6 +128,7 @@ static auto parse_opt(int key, char *arg, struct argp_state *state) -> error_t {
       break;
     case 'R':
       arguments->retransmit_count = static_cast<size_t>(strtoul(arg, nullptr, 10));
+      arguments->new_api = true;
       break;
     case ARGP_KEY_NO_ARGS:
       argp_usage (state);
@@ -150,6 +159,7 @@ static void send_with_new_api(struct ft_arguments &arguments)
 {
   struct fileEntry {
     fileEntry(LibFlute::Transmitter::FileDescription *fd, size_t init_count = 0) :file(fd), transmitted_count(init_count) {};
+
     std::shared_ptr<LibFlute::Transmitter::FileDescription> file;
     size_t transmitted_count;
   };
@@ -162,6 +172,11 @@ static void send_with_new_api(struct ft_arguments &arguments)
     fd->set_expiry_time(std::chrono::system_clock::now() + 60s);
     if (arguments.use_gzip) {
       fd->set_compression(LibFlute::Transmitter::FileDescription::COMPRESSION_GZIP);
+    }
+    if (arguments.gen_etags) {
+      std::array<unsigned char, SHA_DIGEST_LENGTH> digest;
+      SHA1(reinterpret_cast<const unsigned char*>(fd->data()), fd->data_length(), digest.data());
+      fd->set_etag(base64_encode(digest.data(), SHA_DIGEST_LENGTH));
     }
     files.emplace_back(fd);
   }

@@ -282,6 +282,23 @@ namespace LibFlute {
         */
         date_time_type get_expiry_time() const;
 
+       /**
+        *  Set the ETag value for the file
+        *
+        *  Set to the empty string to remove the ETag.
+        *
+        *  @param etag The ETag to set
+        *  @return this file description
+        */
+        FileDescription &set_etag(const std::string &etag);
+
+       /**
+        *  Get the current ETag value
+        *
+        *  @return The current ETag value for the file
+        */
+        const std::string &get_etag() const;
+
       protected:
         friend class Transmitter;
        /**
