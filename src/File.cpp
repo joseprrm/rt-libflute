@@ -59,7 +59,7 @@ File::File(const std::shared_ptr<Transmitter::FileDescription> &file_description
   spdlog::debug("Creating File from FileDescription");
 
   auto length = _file_description->data_length();
-  _buffer = new char[length];
+  _buffer = (char*)malloc(length);
   if (_buffer == nullptr)
   {
     throw "No data allocated";

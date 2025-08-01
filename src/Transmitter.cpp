@@ -83,6 +83,18 @@ Transmitter::FileDescription::FileDescription(const std::string &content_locatio
   _calculate_file_entry();
 }
 
+Transmitter::FileDescription::FileDescription(const std::string &content_location, const std::vector<unsigned char> &data)
+    : _tsi()
+    , _file_entry({ .toi=0, .content_location=content_location})
+    , _compression_type(Transmitter::FileDescription::COMPRESSION_NONE)
+    , _filename()
+    , _file_handle(-1)
+    , _data(reinterpret_cast<const char*>(data.data()))
+    , _data_length(data.size())
+{
+  _calculate_file_entry();
+}
+
 Transmitter::FileDescription::FileDescription(const std::string &content_location, const char *data, size_t length)
     : _tsi()
     , _file_entry({ .toi=0, .content_location=content_location})
@@ -238,6 +250,13 @@ Transmitter::FileDescription &Transmitter::FileDescription::set_compression(
       break;
     }
   }
+
+  return *this;
+}
+
+Transmitter::FileDescription &Transmitter::FileDescription::set_content_location(const std::string &location)
+{
+  _file_entry.content_location = location;
 
   return *this;
 }
@@ -519,6 +538,7 @@ auto Transmitter::send(const std::shared_ptr<Transmitter::FileDescription> &file
   if (file_description->has_tsi() && file_description->tsi() != _tsi) {
     // Reset TOI if the file_description is being used on a new TSI
     file_description->toi(0);
+    spdlog::debug("Reset TOI for FileDescription");
   }
 
   // Set the TSI and TOI for the FileDescription
@@ -527,6 +547,7 @@ auto Transmitter::send(const std::shared_ptr<Transmitter::FileDescription> &file
     file_description->toi(_toi);
     _toi++;
     if (_toi == 0) _toi = 1; // clamp to >= 1 in case it wraps
+    spdlog::debug("Assigned new TOI {}", file_description->toi());
   }
 
   // Copy in default FEC parameters if not already set

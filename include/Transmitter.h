@@ -64,6 +64,7 @@ namespace LibFlute {
         */
         FileDescription(const std::string &content_location, const std::string &filename);
 
+       /**@{*/
        /**
         * Make a file description using the contents of a vector
         *
@@ -75,6 +76,8 @@ namespace LibFlute {
         * @param data The vector containing the file contents
         */
         FileDescription(const std::string &content_location, const std::vector<char> &data);
+        FileDescription(const std::string &content_location, const std::vector<unsigned char> &data);
+       /**@}*/
 
        /**
         * Make a file description using the contents of a memory buffer
@@ -218,6 +221,13 @@ namespace LibFlute {
         * @return this file description
         */
         FileDescription &set_compression(CompressionAlgorithm compression);
+
+       /**
+        * Set Content-Location
+        *
+        * @param location The location URL or filename.
+        */
+        FileDescription &set_content_location(const std::string &location);
 
        /**
         * Change the file contents using a local file
