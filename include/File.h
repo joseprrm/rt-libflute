@@ -102,6 +102,11 @@ namespace LibFlute {
       void decode();
 
      /**
+      *  Check if the buffer is content encoded
+      */
+      bool is_encoded() const { return _been_encoded || !_been_decoded; };
+
+     /**
       *  Get the FEC OTI values
       */
       const FecOti& fec_oti() const { return _meta.fec_oti; };
