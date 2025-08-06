@@ -216,6 +216,7 @@ namespace LibFlute {
         * Set the compression algorithm
         *
         * This sets the compression algorithm that will be used to compress the file contents before sending.
+        * This will reset the TOI if the compression algorithm is changed.
         *
         * @param compression The compression algorithm to set
         * @return this file description
@@ -233,6 +234,7 @@ namespace LibFlute {
         * Change the file contents using a local file
         *
         * This will alter the contents associated with this file description and replace them with the contents of the local file.
+        * This will reset the TOI if the contents have changed.
         *
         * @param filename The local file path for the new contents
         * @return this file description
@@ -245,6 +247,7 @@ namespace LibFlute {
         * This will alter the contents associated with this file description and replace them with a reference to the memory buffer.
         * It is up to the application to ensure that the data is retained in memory until it has finished with this file
         * description and the Transmitter has finished sending the file.
+        * This will reset the TOI if the contents have changed.
         *
         * @param data The in memory buffer to use for the new file contents
         * @param data_length The length of the contents in the memory buffer
@@ -259,6 +262,7 @@ namespace LibFlute {
         * This will alter the contents associated with this file description and replace them with a reference to the contents of
         * the vector. It is up to the application to ensure that the data is retained in memory until it has finished with this
         * file description and the Transmitter has finished sending the file.
+        * This will reset the TOI if the contents have changed.
         *
         * @param data The vector to use for the new file contents
         * @return this file description

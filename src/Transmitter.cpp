@@ -102,7 +102,7 @@ Transmitter::FileDescription::FileDescription(const std::string &content_locatio
     , _filename()
     , _file_handle(-1)
     , _data(data)
-    , _data_length(length)
+    , _data_length(data?length:0)
 {
   _calculate_file_entry();
 }
@@ -247,8 +247,12 @@ Transmitter::FileDescription &Transmitter::FileDescription::set_compression(
       _file_entry.content_encoding = "deflate";
       break;
     default:
+      _file_entry.content_encoding.clear();
       break;
     }
+    /* change in compression will change transmitted data, reset the TOI */
+    _file_entry.toi = 0;
+    _calculate_file_entry();
   }
 
   return *this;
@@ -266,6 +270,9 @@ Transmitter::FileDescription &Transmitter::FileDescription::set_content(const st
   if (filename != _filename) {
     _free_file_data();
     _attach_file(filename);
+    /* Assume a change of filename changes the contents too and zero the TOI */
+    _file_entry.toi = 0;
+    _calculate_file_entry();
   }
 
   return *this;
@@ -273,10 +280,36 @@ Transmitter::FileDescription &Transmitter::FileDescription::set_content(const st
 
 Transmitter::FileDescription &Transmitter::FileDescription::set_content(const char *data, size_t data_length)
 {
-  if (data != _data) {
+  if (!data) data_length=0;
+  if (data != _data || _data_length != data_length) {
+    /* data area has changed in some way, do we need to reset the TOI? */
+    if (_data_length != data_length) {
+      /* data length has changed, reset the TOI */
+      _file_entry.toi = 0;
+    } else if (data) {
+      if (!_data) {
+	if (data_length) {
+          /* data being added, reset the TOI */
+          _file_entry.toi = 0;
+        }
+      } else if (data_length) {
+        /* had data before and have new data now, but are they the same? */
+        unsigned char md5[MD5_DIGEST_LENGTH];
+        MD5(reinterpret_cast<const unsigned char*>(data), data_length, md5);
+        if (_file_entry.content_md5 != base64_encode(md5, sizeof(md5))) {
+          /* data contents are different, reset TOI */
+          _file_entry.toi = 0;
+        }
+      }
+    } else if (_data) {
+      /* data being removed, reset the TOI */
+      _file_entry.toi = 0;
+    }
+       
     _free_file_data();
     _data = data;
     _data_length = data_length;
+    _calculate_file_entry();
   }
 
   return *this;
@@ -406,11 +439,16 @@ void Transmitter::FileDescription::_calculate_file_entry()
   // Content length
   _file_entry.content_length = _data_length;
 
+  // Initial transfer length assumes no encoding, this may be changed on transmission
+  _file_entry.fec_oti.transfer_length = _data_length;
+
   // MD5 checksum
   if (_data && _data_length) {
     unsigned char md5[MD5_DIGEST_LENGTH];
     MD5(reinterpret_cast<const unsigned char*>(_data), _data_length, md5);
     _file_entry.content_md5 = base64_encode(md5, sizeof(md5));
+  } else {
+    _file_entry.content_md5.clear();
   }
 }
 
