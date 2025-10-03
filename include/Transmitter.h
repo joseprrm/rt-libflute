@@ -362,7 +362,7 @@ namespace LibFlute {
       typedef std::function<void(uint32_t)> completion_callback_t;
 
      /**
-      *  Default constructor.
+      *  Constructor.
       *
       *  @param address Target multicast address
       *  @param port Target port
@@ -384,6 +384,121 @@ namespace LibFlute {
       *  Default destructor.
       */
       virtual ~Transmitter();
+
+     /**
+      * Get UDP Tunnel Address
+      *
+      * @return The optional UDP Tunnel Address for the Transmitter to use.
+      */
+      const std::optional<boost::asio::ip::udp::endpoint> &udp_tunnel_address() const { return _tunnel_endpoint; };
+
+     /**
+      * Set UDP Tunnel Address
+      *
+      * Sets the UDP tunnel endpoint to be a copy of @p new_tunnel_endpoint.
+      *
+      * @param new_tunnel_endpoint The new UDP tunnel endpoint to set.
+      * @return This Transmitter object.
+      */
+      Transmitter &udp_tunnel_address(const boost::asio::ip::udp::endpoint &new_tunnel_endpoint);
+
+     /**
+      * Set UDP Tunnel Address
+      *
+      * Sets the UDP tunnel endpoint to be @p new_tunnel_endpoint. This moves the value from @p new_tunnel_endpoint.
+      *
+      * @param new_tunnel_endpoint The new UDP tunnel endpoint to set.
+      * @return This Transmitter object.
+      */
+      Transmitter &udp_tunnel_address(boost::asio::ip::udp::endpoint &&new_tunnel_endpoint);
+
+     /**
+      * Set UDP Tunnel Address
+      *
+      * Sets the UDP tunnel endpoint to be a copy of the optional @p new_tunnel_endpoint.
+      *
+      * @param new_tunnel_endpoint The optional UDP tunnel endpoint to set.
+      * @return This Transmitter object.
+      */
+      Transmitter &udp_tunnel_address(const std::optional<boost::asio::ip::udp::endpoint> &new_tunnel_endpoint);
+
+     /**
+      * Set UDP Tunnel Address
+      *
+      * Sets the UDP tunnel endpoint to be the optional @p new_tunnel_endpoint. This moves the value from @p new_tunnel_endpoint.
+      *
+      * @param new_tunnel_endpoint The optional UDP tunnel endpoint to set.
+      * @return This Transmitter object.
+      */
+      Transmitter &udp_tunnel_address(std::optional<boost::asio::ip::udp::endpoint> &&new_tunnel_endpoint);
+
+     /**
+      * Unset UDP Tunnel Address
+      *
+      * Removes the UDP tunnel endpoint. If the stream is active then it will switch back to multicast transmission.
+      *
+      * @return This Transmitter object.
+      */
+      Transmitter &udp_tunnel_address(const std::nullopt_t&);
+
+     /**
+      * Get Maximum Bit Rate
+      *
+      * Returns the maximum bit rate (MBR) value that the Transmitter is using. A 0 MBR means no limit.
+      *
+      * @return The maximum bit rate.
+      */
+      uint32_t rate_limit() const { return _rate_limit; };
+
+     /**
+      * Set Maximum Bit Rate
+      *
+      * Sets the MBR for transmission. A value of 0 indicates no rate limit.
+      *
+      * @param limit The new MBR to set.
+      * @return This Transmitter object.
+      */
+      Transmitter &rate_limit(uint32_t limit) { _rate_limit = limit; return *this; };
+
+     /**
+      * Get UDP Address for FLUTE session
+      *
+      * Gets the destination address for the FLUTE session packets. If the UDP tunnel address is set then the packets will be
+      * tunnelled to the UDP tunnel address, otherwise packets are sent directly to the destination address.
+      *
+      * @return The current destination address.
+      */
+      const boost::asio::ip::udp::endpoint &endpoint() const { return _endpoint; };
+
+     /**
+      * Set UDP Address for FLUTE session
+      *
+      * Sets the destination address for FLUTE session packets. If the UDP Tunnel Address is not set then FLUTE packets will be
+      * sent directly to this UDP endpoint. When a UDP Tunnel Address is set then FLUTE packets with this destination will be
+      * tunnelled to the UDP Tunnel Address.
+      *
+      * @param address The IP address or hostname to set as the FLUTE packet destination address.
+      * @param port The UDP port number to set as the FLUTE packet destination UDP port.
+      *
+      * @return This Transmitter object.
+      */
+      Transmitter &endpoint(const std::string &address, uint32_t port);
+
+     /**@{*/
+     /**
+      * Set UDP Address for FLUTE session
+      *
+      * Sets the destination address for FLUTE session packets. If the UDP Tunnel Address is not set then FLUTE packets will be
+      * sent directly to this UDP endpoint. When a UDP Tunnel Address is set then FLUTE packets with this destination will be
+      * tunnelled to the UDP Tunnel Address.
+      *
+      * @param destination The UDP endpoint to set as the FLUTE packet destination address and port.
+      *
+      * @return This Transmitter object.
+      */
+      Transmitter &endpoint(const boost::asio::ip::udp::endpoint &destination);
+      Transmitter &endpoint(boost::asio::ip::udp::endpoint &&destination);
+     /**@}*/
 
      /**
       *  Enable IPSEC ESP encryption of FLUTE payloads.

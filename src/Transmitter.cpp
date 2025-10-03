@@ -482,7 +482,7 @@ Transmitter::Transmitter ( const std::string& address, short port,
      4;  // SBN and ESI for compact no-code FEC
   if (_tunnel_endpoint.has_value()) {
     // Remove extra overhead for UDP tunnelling, if set
-    _max_payload -= 20 - // IPv4 header
+    _max_payload -= 20 + // IPv4 header
                     8; // UDP header
     boost::asio::ip::udp::socket local_socket(_io_context, _tunnel_endpoint.value().protocol());
     local_socket.connect(_tunnel_endpoint.value());
@@ -506,6 +506,68 @@ Transmitter::Transmitter ( const std::string& address, short port,
 }
 
 Transmitter::~Transmitter() = default;
+
+auto Transmitter::udp_tunnel_address(const boost::asio::ip::udp::endpoint &new_tunnel_endpoint) -> Transmitter&
+{
+  return udp_tunnel_address(std::optional<boost::asio::ip::udp::endpoint>(new_tunnel_endpoint));
+}
+
+auto Transmitter::udp_tunnel_address(boost::asio::ip::udp::endpoint &&new_tunnel_endpoint) -> Transmitter&
+{
+  return udp_tunnel_address(std::optional<boost::asio::ip::udp::endpoint>(std::move(new_tunnel_endpoint)));
+}
+
+auto Transmitter::udp_tunnel_address(const std::optional<boost::asio::ip::udp::endpoint> &new_tunnel_endpoint) -> Transmitter&
+{
+  return udp_tunnel_address(std::move(std::optional<boost::asio::ip::udp::endpoint>(new_tunnel_endpoint)));
+}
+
+auto Transmitter::udp_tunnel_address(std::optional<boost::asio::ip::udp::endpoint> &&new_tunnel_endpoint) -> Transmitter&
+{
+  if (!!_tunnel_endpoint == !!new_tunnel_endpoint) {
+    /* change existing tunnel */
+    if (_tunnel_endpoint) _tunnel_endpoint = new_tunnel_endpoint;
+  } else if (_tunnel_endpoint) {
+    /* removing tunnel */
+    _max_payload += 20 + // IPv4 header
+                    8; // UDP header
+    _tunnel_endpoint = std::nullopt;
+  } else {
+    /* new tunnel */
+    _tunnel_endpoint = std::move(new_tunnel_endpoint);
+    _max_payload -= 20 + // IPv4 header
+                    8; // UDP header
+  }
+
+  if (_tunnel_endpoint) {
+    boost::asio::ip::udp::socket local_socket(_io_context, _tunnel_endpoint.value().protocol());
+    local_socket.connect(_tunnel_endpoint.value());
+    _tunnel_local_address = local_socket.local_endpoint().address();
+  }
+  return *this;
+}
+
+auto Transmitter::udp_tunnel_address(const std::nullopt_t&) -> Transmitter&
+{
+  return udp_tunnel_address(std::optional<boost::asio::ip::udp::endpoint>(std::nullopt));
+}
+
+auto Transmitter::endpoint(const std::string &address, uint32_t port) -> Transmitter&
+{
+  return endpoint(boost::asio::ip::udp::endpoint(boost::asio::ip::make_address(address), port));
+}
+
+auto Transmitter::endpoint(const boost::asio::ip::udp::endpoint &destination) -> Transmitter&
+{
+  _endpoint = destination;
+  return *this;
+}
+
+auto Transmitter::endpoint(boost::asio::ip::udp::endpoint &&destination) -> Transmitter&
+{
+  _endpoint = std::move(destination);
+  return *this;
+}
 
 auto Transmitter::enable_ipsec(uint32_t spi, const std::string& key) -> void
 {
