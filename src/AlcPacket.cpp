@@ -91,7 +91,7 @@ LibFlute::AlcPacket::AlcPacket(char* data, size_t len)
    _lct_header.tsi_flag +
    _lct_header.toi_flag;
 
-  auto ext_header_len = (_lct_header.lct_header_len - expected_header_len) * 4;
+  size_t ext_header_len = (_lct_header.lct_header_len - expected_header_len) * 4;
   while (ext_header_len > 0) {
     auto ext_ptr = hdr_ptr;
     uint8_t het = *ext_ptr;
