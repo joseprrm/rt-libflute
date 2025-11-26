@@ -460,7 +460,7 @@ Transmitter::Transmitter ( const std::string& address, short port,
                            uint64_t tsi, unsigned short mtu, uint32_t rate_limit,
                            boost::asio::io_context& io_context,
                            const std::optional<boost::asio::ip::udp::endpoint> &tunnel_endpoint,
-                           Transmitter::FdtNamespace fdt_namespace )
+                           Transmitter::FdtNamespace fdt_namespace, bool active )
     : _endpoint(boost::asio::ip::make_address(address), port)
     , _socket(io_context, _endpoint.protocol())
     , _io_context(io_context)
@@ -474,6 +474,7 @@ Transmitter::Transmitter ( const std::string& address, short port,
     , _rate_limit(rate_limit)
     , _tunnel_endpoint(tunnel_endpoint)
     , _tunnel_local_address()
+    , _active(active)
 {
   _max_payload = mtu -
     20 - // IPv4 header
@@ -499,10 +500,11 @@ Transmitter::Transmitter ( const std::string& address, short port,
     .max_source_block_length = max_source_block_length};
   _fdt = std::make_unique<FileDeliveryTable>(1, _fec_oti, fdt_namespace);
 
-  _fdt_timer.expires_from_now(boost::posix_time::seconds(_fdt_repeat_interval));
-  _fdt_timer.async_wait( boost::bind(&Transmitter::fdt_send_tick, this));
-
-  send_next_packet();
+  if (_active) {
+    _fdt_timer.expires_from_now(boost::posix_time::seconds(_fdt_repeat_interval));
+    _fdt_timer.async_wait( boost::bind(&Transmitter::fdt_send_tick, this, boost::placeholders::_1));
+    send_next_packet();
+  }
 }
 
 Transmitter::~Transmitter() = default;
@@ -604,7 +606,10 @@ auto Transmitter::send_fdt() -> void {
   if (file) {
     file->set_fdt_instance_id( _fdt->instance_id() );
     spdlog::debug("Sending FDT instance {}:\n{}", _fdt->instance_id(), _fdt->to_string());
-    _files.insert_or_assign(0, file);
+    {
+      std::lock_guard<std::mutex> guard(_files_mutex);
+      _files.insert_or_assign(0, file);
+    }
     _fdt->sent();
   }
 }
@@ -631,7 +636,10 @@ auto Transmitter::send(
 
   _fdt->add(file->meta());
   send_fdt();
-  _files.insert({toi, file});
+  {
+    std::lock_guard<std::mutex> guard(_files_mutex);
+    _files.insert({toi, file});
+  }
   return toi;
 }
 
@@ -656,23 +664,32 @@ auto Transmitter::send(const std::shared_ptr<Transmitter::FileDescription> &file
   file_description->merge_fec_oti(_fec_oti);
 
   auto file = std::make_shared<File>(file_description);
+  {
+    std::lock_guard<std::mutex> guard(_files_mutex);
+    _files.insert({file_description->toi(), file});
+  }
   _fdt->add(file->meta());
   send_fdt();
-  _files.insert({file_description->toi(), file});
   return file_description->toi();
 }
 
-auto Transmitter::fdt_send_tick() -> void
+auto Transmitter::fdt_send_tick(const boost::system::error_code& error) -> void
 {
-  send_fdt();
-  _fdt_timer.expires_from_now(boost::posix_time::seconds(_fdt_repeat_interval));
-  _fdt_timer.async_wait( boost::bind(&Transmitter::fdt_send_tick, this));
+  if (error == boost::asio::error::operation_aborted) return;
+  if (_active) {
+    send_fdt();
+    _fdt_timer.expires_from_now(boost::posix_time::seconds(_fdt_repeat_interval));
+    _fdt_timer.async_wait( boost::bind(&Transmitter::fdt_send_tick, this, boost::placeholders::_1));
+  }
 }
 
 auto Transmitter::file_transmitted(uint32_t toi) -> void
 {
-  if (toi != 0) {
+  {
+    std::lock_guard<std::mutex> guard(_files_mutex);
     _files.erase(toi);
+  }
+  if (toi != 0) {
     _fdt->remove(toi);
     send_fdt();
 
@@ -686,71 +703,98 @@ auto Transmitter::send_next_packet() -> void
 {
   uint32_t bytes_queued = 0;
 
-  if (_files.size()) {
+  if (!_active) return;
+  std::shared_ptr<File> file;
+  {
+    std::lock_guard<std::mutex> guard(_files_mutex);
     for (auto& file_m : _files) {
-      auto file = file_m.second;
+      auto &next_file = file_m.second;
 
-      if (file && !file->complete()) {
-        auto symbols = file->get_next_symbols(_max_payload);
-
-        if (symbols.size()) {
-          for(const auto& symbol : symbols) {
-            spdlog::debug("sending TOI {} SBN {} ID {}", file->meta().toi, symbol.source_block_number(), symbol.id() );
-          }
-          auto packet = std::make_shared<AlcPacket>(_tsi, file->meta().toi, file->meta().fec_oti, symbols, _max_payload, file->fdt_instance_id());
-          bytes_queued += packet->size();
-
-	  boost::asio::ip::udp::endpoint send_endpoint;
-          char *data = nullptr;
-          size_t data_size = 0;
-	  if (_tunnel_endpoint) {
-	    send_endpoint = _tunnel_endpoint.value();
-	    data_size = packet->size() + 20 /* IP header */ + 8 /* UDP header */;
-            data = new char[data_size];
-	    create_udp_pkt(data+20, _endpoint, packet->data(), packet->size(), _tunnel_local_address);
-	    create_ip_hdr(data, _endpoint, data_size, _tunnel_local_address);
-	  } else {
-            send_endpoint = _endpoint;
-	    data = packet->data();
-            data_size = packet->size();
-          }
-          _socket.async_send_to(
-              boost::asio::buffer(data, data_size), send_endpoint,
-              [file, symbols, packet, this](
-                const boost::system::error_code& error,
-                std::size_t bytes_transferred)
-              {
-                if (error) {
-                  spdlog::debug("sent_to error: {}", error.message());
-                } else {
-                  file->mark_completed(symbols, !error);
-                  if (file->complete()) {
-                    file_transmitted(file->meta().toi);
-                  }
-                }
-              });
-          if (_tunnel_endpoint) {
-	    delete[] data;
-          }
-        }
+      if (next_file && !next_file->complete()) {
+        file = next_file;
         break;
       }
     }
   }
-  if (!bytes_queued) {
-    _send_timer.expires_from_now(boost::posix_time::milliseconds(10));
-    _send_timer.async_wait( boost::bind(&Transmitter::send_next_packet, this));
-  } else {
-    if (_rate_limit == 0) {
-      boost::asio::post(_io_context, boost::bind(&Transmitter::send_next_packet, this));
-    } else {
-      auto send_duration = ((bytes_queued * 8.0) / (double)_rate_limit/1000.0) * 1000.0 * 1000.0;
-      spdlog::trace("Rate limiter: queued {} bytes, limit {} kbps, next send in {} us",
-          bytes_queued, _rate_limit, send_duration);
-      _send_timer.expires_from_now(boost::posix_time::microseconds(
-            static_cast<int>(ceil(send_duration))));
-      _send_timer.async_wait( boost::bind(&Transmitter::send_next_packet, this));
+  if (file) {
+    auto symbols = file->get_next_symbols(_max_payload);
+
+    if (symbols.size()) {
+      for(const auto& symbol : symbols) {
+        spdlog::debug("sending TOI {} SBN {} ID {}", file->meta().toi, symbol.source_block_number(), symbol.id() );
+      }
+      auto packet = std::make_shared<AlcPacket>(_tsi, file->meta().toi, file->meta().fec_oti, symbols, _max_payload, file->fdt_instance_id());
+      bytes_queued += packet->size();
+
+      boost::asio::ip::udp::endpoint send_endpoint;
+      char *data = nullptr;
+      size_t data_size = 0;
+      if (_tunnel_endpoint) {
+        send_endpoint = _tunnel_endpoint.value();
+        data_size = packet->size() + 20 /* IP header */ + 8 /* UDP header */;
+        data = new char[data_size];
+        create_udp_pkt(data+20, _endpoint, packet->data(), packet->size(), _tunnel_local_address);
+        create_ip_hdr(data, _endpoint, data_size, _tunnel_local_address);
+      } else {
+        send_endpoint = _endpoint;
+        data = packet->data();
+        data_size = packet->size();
+      }
+      _socket.async_send_to(
+          boost::asio::buffer(data, data_size), send_endpoint,
+          [file, symbols, packet, this](
+              const boost::system::error_code& error,
+              std::size_t bytes_transferred)
+          {
+            if (error) {
+              spdlog::debug("sent_to error: {}", error.message());
+            } else {
+              file->mark_completed(symbols, !error);
+              if (file->complete()) {
+                file_transmitted(file->meta().toi);
+              }
+            }
+          });
+      if (_tunnel_endpoint) {
+        delete[] data;
+      }
     }
+  }
+  if (_active) {
+    if (!bytes_queued) {
+      _send_timer.expires_from_now(boost::posix_time::milliseconds(10));
+      _send_timer.async_wait( boost::bind(&Transmitter::send_next_packet, this));
+    } else {
+      if (_rate_limit == 0) {
+        boost::asio::post(_io_context, boost::bind(&Transmitter::send_next_packet, this));
+      } else {
+        auto send_duration = ((bytes_queued * 8.0) / (double)_rate_limit/1000.0) * 1000.0 * 1000.0;
+        spdlog::trace("Rate limiter: queued {} bytes, limit {} kbps, next send in {} us",
+            bytes_queued, _rate_limit, send_duration);
+        _send_timer.expires_from_now(boost::posix_time::microseconds(
+              static_cast<int>(ceil(send_duration))));
+        _send_timer.async_wait( boost::bind(&Transmitter::send_next_packet, this));
+      }
+    }
+  }
+}
+
+auto Transmitter::activate() -> void
+{
+  if (!_active) {
+    _active = true;
+    _fdt_timer.expires_from_now(boost::posix_time::seconds(_fdt_repeat_interval));
+    _fdt_timer.async_wait( boost::bind(&Transmitter::fdt_send_tick, this, boost::placeholders::_1));
+    send_next_packet();
+  }
+}
+
+auto Transmitter::deactivate() -> void
+{
+  if (_active) {
+    _active = false;
+    _fdt_timer.cancel();
+    _send_timer.cancel();
   }
 }
 
@@ -801,19 +845,19 @@ static void create_ip_hdr(char *ip_buffer, const boost::asio::ip::udp::endpoint 
 
 static uint16_t calculate_sum(uint16_t *buffer, size_t len)
 {
-    uint32_t cksum = 0;
+  uint32_t cksum = 0;
 
-    while (len > 1) {
-	cksum += ntohs(*buffer);
-        len -= 2;
-        buffer++;
-    }
-    if (len > 0) {
-        cksum = *reinterpret_cast<uint8_t*>(buffer);
-    }
-    uint16_t result = ~htons(static_cast<uint16_t>(cksum & 0xFFFF) + static_cast<uint16_t>(cksum >> 16));
+  while (len > 1) {
+    cksum += ntohs(*buffer);
+    len -= 2;
+    buffer++;
+  }
+  if (len > 0) {
+    cksum = *reinterpret_cast<uint8_t*>(buffer);
+  }
+  uint16_t result = ~htons(static_cast<uint16_t>(cksum & 0xFFFF) + static_cast<uint16_t>(cksum >> 16));
 
-    return result;
+  return result;
 }
 
 } // End namespace LibFlute

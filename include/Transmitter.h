@@ -33,6 +33,9 @@ namespace LibFlute {
 
   /**
    *  FLUTE transmitter class. Construct an instance of this to send data through a FLUTE/ALC session.
+   *
+   *  The session can be active (sending packets) or inactive (sending of packets paused). This allows the FLUTE session to be
+   *  suspended using the deactivate() method and later resumed using activate().
    */
   class Transmitter {
     public:
@@ -372,13 +375,15 @@ namespace LibFlute {
       *  @param io_context Boost io_context to run the socket operations in (must be provided by the caller)
       *  @param tunnel_endpoint Tunnelling endpoint address (default: no tunnelling)
       *  @param fdt_namespace Which XML namespace to use for the FDT (default: none)
+      *  @param active Start as active/inactive FLUTE session (default: active)
       */
       Transmitter( const std::string& address,
           short port, uint64_t tsi, unsigned short mtu,
           uint32_t rate_limit,
           boost::asio::io_context& io_context,
           const std::optional<boost::asio::ip::udp::endpoint> &tunnel_endpoint = std::nullopt,
-          FdtNamespace fdt_namespace = FileDeliveryTable::FDT_NS_NONE);
+          FdtNamespace fdt_namespace = FileDeliveryTable::FDT_NS_NONE,
+          bool active = true);
 
      /**
       *  Default destructor.
@@ -560,10 +565,36 @@ namespace LibFlute {
       */
       void register_completion_callback(completion_callback_t cb) { _completion_cb = cb; };
 
+     /**
+      * Activate the FLUTE session
+      *
+      * If the Transmitter is currently deactivated then the state is set to active and the FLUTE stream will start transmitting.
+      * Sending of packets will start or resume until the deactivate() method is called or this Transmitter is destroyed.
+      */
+      void activate();
+
+     /**
+      * Deactivate the FLUTE session
+      *
+      * If the Transmitter is currently active then the FLUTE stream is halted and the state is changed to deactivated. Sending of
+      * packets will be halted until the activate() method is called. Note that this will pause File transmission part way through
+      * if a File is currently being transmitted. If the application wishes for deactivation once Files have finished sending then
+      * it should only deactivate() when the completion callback is called and number_of_files() equals 0 to ensure all Files have
+      * been completely transmitted.
+      */
+      void deactivate();
+
+     /**
+      * Get number of files currently being sent
+      *
+      * @return The number of files in the queue for sending.
+      */
+      size_t number_of_files() { std::lock_guard<std::mutex> guard(_files_mutex); return _files.size(); };
+
     private:
       void send_fdt();
       void send_next_packet();
-      void fdt_send_tick();
+      void fdt_send_tick(const boost::system::error_code& error);
 
       void file_transmitted(uint32_t toi);
 
@@ -593,6 +624,8 @@ namespace LibFlute {
       uint32_t _rate_limit = 0;
       std::optional<boost::asio::ip::udp::endpoint> _tunnel_endpoint = std::nullopt;
       boost::asio::ip::address _tunnel_local_address;
+
+      bool _active;
   };
 
 } // end namespace LibFlute
