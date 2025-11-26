@@ -201,7 +201,7 @@ static void send_with_new_api(struct ft_arguments &arguments)
 
   // Register a completion callback
   transmitter.register_completion_callback(
-        [&files, &arguments, &transmitter](uint32_t toi) {
+        [&files, &arguments, &transmitter](uint32_t toi) -> void {
           for (auto& f : files) {
             if (f.file->toi() == toi) {
               spdlog::info("{} (TOI {}) has been transmitted", f.file->file_entry().content_location, f.file->toi());
@@ -269,7 +269,7 @@ static void send_with_old_api(struct ft_arguments &arguments)
 
   // Register a completion callback
   transmitter.register_completion_callback(
-        [&files](uint32_t toi) {
+        [&files](uint32_t toi) -> void {
           for (auto& file : files) {
             if (file.toi == toi) {
               spdlog::info("{} (TOI {}) has been transmitted", file.location, file.toi);
