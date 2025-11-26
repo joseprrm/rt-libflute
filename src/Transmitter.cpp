@@ -589,6 +589,7 @@ auto Transmitter::seconds_since_epoch() -> uint64_t
 }
 
 auto Transmitter::send_fdt() -> void {
+  if (_fdt->file_entries().empty()) return;
   _fdt->set_expires(seconds_since_epoch() + _fdt_repeat_interval * 2);
   auto fdt = _fdt->to_string();
   auto file = std::make_shared<File>(
@@ -604,6 +605,7 @@ auto Transmitter::send_fdt() -> void {
     file->set_fdt_instance_id( _fdt->instance_id() );
     spdlog::debug("Sending FDT instance {}:\n{}", _fdt->instance_id(), _fdt->to_string());
     _files.insert_or_assign(0, file);
+    _fdt->sent();
   }
 }
 

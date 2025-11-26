@@ -133,6 +133,7 @@ bool LibFlute::FileDeliveryTable::FileEntry::operator==(const LibFlute::FileDeli
 
 LibFlute::FileDeliveryTable::FileDeliveryTable(uint32_t instance_id, FecOti fec_oti, FdtNamespace fdt_namespace)
   : _instance_id( instance_id )
+  , _instance_id_sent( instance_id - 1 )
   , _global_fec_oti( fec_oti )
   , _fdt_namespace( fdt_namespace )
 {
@@ -140,6 +141,7 @@ LibFlute::FileDeliveryTable::FileDeliveryTable(uint32_t instance_id, FecOti fec_
 
 LibFlute::FileDeliveryTable::FileDeliveryTable(uint32_t instance_id, char* buffer, size_t len) 
   : _instance_id( instance_id )
+  , _instance_id_sent( instance_id - 1 )
   , _global_fec_oti()
 {
   static const std::string mbms2007_ns("urn:3GPP:metadata:2007:MBMS:FLUTE:FDT"); // 3GPP TS 26.346 Clause 7.2.10.2
@@ -339,7 +341,7 @@ LibFlute::FileDeliveryTable::FileDeliveryTable(uint32_t instance_id, char* buffe
 
 auto LibFlute::FileDeliveryTable::add(const FileEntry& fe) -> void
 {
-  _instance_id++;
+  if (_instance_id == _instance_id_sent) _instance_id++;
   _file_entries.push_back(fe);
 }
 
@@ -352,7 +354,7 @@ auto LibFlute::FileDeliveryTable::remove(uint32_t toi) -> void
       ++it;
     }
   }
-  _instance_id++;
+  if (_instance_id == _instance_id_sent) _instance_id++;
 }
 
 auto LibFlute::FileDeliveryTable::to_string() const -> std::string {

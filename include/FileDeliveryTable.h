@@ -116,8 +116,14 @@ namespace LibFlute {
         return _file_entries;
       };
 
+     /**
+      * Mark instance sent
+      */
+      void sent() { _instance_id_sent = _instance_id; };
+
     private:
       uint32_t _instance_id;
+      uint32_t _instance_id_sent;
 
       std::vector<FileEntry> _file_entries;
       FecOti _global_fec_oti;
