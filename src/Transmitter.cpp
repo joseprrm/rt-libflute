@@ -501,8 +501,7 @@ Transmitter::Transmitter ( const std::string& address, short port,
   _fdt = std::make_unique<FileDeliveryTable>(1, _fec_oti, fdt_namespace);
 
   if (_active) {
-    _fdt_timer.expires_from_now(boost::posix_time::seconds(_fdt_repeat_interval));
-    _fdt_timer.async_wait( boost::bind(&Transmitter::fdt_send_tick, this, boost::placeholders::_1));
+    start_fdt_repeat_timer();
     send_next_packet();
   }
 }
@@ -678,8 +677,7 @@ auto Transmitter::fdt_send_tick(const boost::system::error_code& error) -> void
   if (error == boost::asio::error::operation_aborted) return;
   if (_active) {
     send_fdt();
-    _fdt_timer.expires_from_now(boost::posix_time::seconds(_fdt_repeat_interval));
-    _fdt_timer.async_wait( boost::bind(&Transmitter::fdt_send_tick, this, boost::placeholders::_1));
+    start_fdt_repeat_timer();
   }
 }
 
@@ -783,8 +781,7 @@ auto Transmitter::activate() -> void
 {
   if (!_active) {
     _active = true;
-    _fdt_timer.expires_from_now(boost::posix_time::seconds(_fdt_repeat_interval));
-    _fdt_timer.async_wait( boost::bind(&Transmitter::fdt_send_tick, this, boost::placeholders::_1));
+    start_fdt_repeat_timer();
     send_next_packet();
   }
 }
@@ -796,6 +793,12 @@ auto Transmitter::deactivate() -> void
     _fdt_timer.cancel();
     _send_timer.cancel();
   }
+}
+
+auto Transmitter::start_fdt_repeat_timer() -> void
+{
+    _fdt_timer.expires_from_now(boost::posix_time::seconds(_fdt_repeat_interval));
+    _fdt_timer.async_wait( boost::bind(&Transmitter::fdt_send_tick, this, boost::placeholders::_1));
 }
 
 static void create_udp_pkt(char *udp_buffer, const boost::asio::ip::udp::endpoint &endpoint, const char *data, size_t data_len, const boost::asio::ip::address &local_address)

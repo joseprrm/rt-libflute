@@ -585,7 +585,7 @@ namespace LibFlute {
       void deactivate();
 
      /**
-      * Get number of files currently being sent
+      * Get number of files currently in queue for sending
       *
       * @return The number of files in the queue for sending.
       */
@@ -595,6 +595,7 @@ namespace LibFlute {
       void send_fdt();
       void send_next_packet();
       void fdt_send_tick(const boost::system::error_code& error);
+      void start_fdt_repeat_timer();
 
       void file_transmitted(uint32_t toi);
 

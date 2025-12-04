@@ -211,7 +211,6 @@ LibFlute::AlcPacket::AlcPacket(uint16_t tsi, uint16_t toi, LibFlute::FecOti fec_
     *((uint16_t*)hdr_ptr) = htons(_fec_oti.encoding_symbol_length);
     hdr_ptr += 2;
     *((uint32_t*)hdr_ptr) = htonl(_fec_oti.max_source_block_length);
-    //hdr_ptr += 4;
   }
 }
 
