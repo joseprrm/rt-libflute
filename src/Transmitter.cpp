@@ -856,7 +856,7 @@ static uint16_t calculate_sum(uint16_t *buffer, size_t len)
     buffer++;
   }
   if (len > 0) {
-    cksum = *reinterpret_cast<uint8_t*>(buffer);
+    cksum += (*reinterpret_cast<uint8_t*>(buffer)) << 8;
   }
   uint16_t result = ~htons(static_cast<uint16_t>(cksum & 0xFFFF) + static_cast<uint16_t>(cksum >> 16));
 
