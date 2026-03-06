@@ -848,19 +848,24 @@ static void create_ip_hdr(char *ip_buffer, const boost::asio::ip::udp::endpoint 
 
 static uint16_t calculate_sum(uint16_t *buffer, size_t len)
 {
-  uint32_t cksum = 0;
+    uint32_t cksum = 0;
 
-  while (len > 1) {
-    cksum += ntohs(*buffer);
-    len -= 2;
-    buffer++;
-  }
-  if (len > 0) {
-    cksum += (*reinterpret_cast<uint8_t*>(buffer)) << 8;
-  }
-  uint16_t result = ~htons(static_cast<uint16_t>(cksum & 0xFFFF) + static_cast<uint16_t>(cksum >> 16));
+    while (len > 1) {
+        cksum += ntohs(*buffer++);
+        len -= 2;
+    }
 
-  return result;
+    if (len > 0) { // odd length: last byte in high-order byte of 16-bit word
+        cksum += (*reinterpret_cast<uint8_t*>(buffer)) << 8;
+    }
+
+    // Fold carries until no more carry remains
+    while (cksum >> 16) {
+        cksum = (cksum & 0xFFFF) + (cksum >> 16);
+    }
+
+    // One's complement and convert to network byte order
+    return htons(static_cast<uint16_t>(~cksum));
 }
 
 } // End namespace LibFlute
